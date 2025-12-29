@@ -1,9 +1,10 @@
 name: Publish to PyPI
 
 on:
-  # Trigger on release creation
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'           # v1.0.0 → publishes do-app-sandbox from main
+      - 'console-v*'   # console-v1.0.0 → publishes do-app-console from console branch
 
   # Manual trigger from GitHub Actions UI
   workflow_dispatch:
@@ -21,6 +22,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Determine package name
+        id: package
+        run: |
+          # Extract package name from pyproject.toml
+          PACKAGE_NAME=$(grep '^name = ' pyproject.toml | sed 's/name = "\(.*\)"/\1/')
+          echo "name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Publishing package: $PACKAGE_NAME"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,6 +57,8 @@ jobs:
         run: |
           echo "## Published to PyPI! 🎉" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Package:** do-app-sandbox" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** ${{ steps.package.outputs.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Files:**" >> $GITHUB_STEP_SUMMARY
           ls -la dist/ >> $GITHUB_STEP_SUMMARY
