@@ -2,12 +2,28 @@
 
 > **Experimental**: This is a personal project and is not officially supported by DigitalOcean. APIs may change without notice.
 
-This is part of 3 projects to scale Agentic workflows with DigitalOcean App Platform. The concepts are generic and should work with any PaaS:
-- Safe local sandboxing using DevContainers ([do-app-devcontainer](https://github.com/bikramkgupta/do-app-devcontainer))
-- Rapid development iteration using hot reload ([do-app-hot-reload-template](https://github.com/bikramkgupta/do-app-hot-reload-template))
-- Disposable environments using sandboxes for parallel experimentation and debugging (this repo or [do-app-sandbox](https://github.com/bikramkgupta/do-app-sandbox))
+A Python SDK for creating disposable sandbox environments on DigitalOcean App Platform.
 
-A Python SDK that provides sandbox-like capabilities for DigitalOcean App Platform, similar to Cloudflare Sandbox.
+**Looking to troubleshoot existing App Platform apps?** See [do-app-console](https://github.com/bikramkgupta/do-app-console) — the same toolkit focused on connecting to and debugging your production apps.
+
+## What This Package Does
+
+**DO App Sandbox** is designed for creating **new, temporary sandbox environments**:
+
+```python
+from do_app_sandbox import Sandbox
+
+# Create a fresh sandbox environment
+sandbox = Sandbox.create(image="python", name="my-experiment")
+sandbox.exec("pip install pandas && python analyze.py")
+sandbox.delete()  # Clean up when done
+```
+
+Use cases:
+- **Parallel experimentation**: Spin up multiple isolated environments
+- **CI/CD testing**: Create fresh environments for each test run
+- **Safe code execution**: Run untrusted code in disposable containers
+- **Development sandboxes**: Quick environments without local setup
 
 ## Features
 
@@ -18,11 +34,18 @@ A Python SDK that provides sandbox-like capabilities for DigitalOcean App Platfo
 - **Async support**: Both synchronous and asynchronous APIs
 - **CLI tool**: Manage sandboxes from the command line
 - **Hosted images**: Uses maintained Python and Node images; no custom image setup required
-- **Troubleshoot existing apps**: Connect to any App Platform app for troubleshooting ([guide](docs/troubleshooting_existing_apps.md))
+
+## Related Projects
+
+This is part of 3 projects to scale Agentic workflows with DigitalOcean App Platform:
+- [do-app-devcontainer](https://github.com/bikramkgupta/do-app-devcontainer) — Safe local sandboxing using DevContainers
+- [do-app-hot-reload-template](https://github.com/bikramkgupta/do-app-hot-reload-template) — Rapid development iteration using hot reload
+- [do-app-console](https://github.com/bikramkgupta/do-app-console) — Remote console for troubleshooting existing apps
 
 ## Documentation
+
 - Reference tables for SDK and CLI parameters/outputs: `docs/sandbox_reference.md`
-- Troubleshooting existing App Platform apps: `docs/troubleshooting_existing_apps.md`
+- Lifecycle management guide: `docs/sandbox_lifecycle.md`
 
 ## Installation
 
