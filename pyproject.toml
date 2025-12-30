@@ -29,10 +29,10 @@ dependencies = [
 console = "do_app_sandbox.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/bikramkgupta/do-app-console"
-Documentation = "https://github.com/bikramkgupta/do-app-console#readme"
-Repository = "https://github.com/bikramkgupta/do-app-console"
-Issues = "https://github.com/bikramkgupta/do-app-console/issues"
+Homepage = "https://github.com/bikramkgupta/do-app-sandbox"
+Documentation = "https://github.com/bikramkgupta/do-app-sandbox/tree/console#readme"
+Repository = "https://github.com/bikramkgupta/do-app-sandbox/tree/console"
+Issues = "https://github.com/bikramkgupta/do-app-sandbox/issues"
 
 [project.optional-dependencies]
 dev = [
