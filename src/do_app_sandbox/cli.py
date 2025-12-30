@@ -1,13 +1,7 @@
 """Command-line interface for App Platform Sandbox.
 
 This module provides a CLI for managing sandbox environments on DigitalOcean App Platform.
-
-Usage:
-    sandbox setup --registry MY_REGISTRY    # Build and push images
-    sandbox create --image python           # Create a new sandbox
-    sandbox list                            # List all sandboxes
-    sandbox delete NAME                     # Delete a sandbox
-    sandbox exec NAME "command"             # Execute a command
+See branding.py for user-facing strings that differ between package variants.
 """
 
 import argparse
@@ -29,6 +23,7 @@ from .deployer import (
 )
 from .sandbox import ENV_REGION, ENV_REGISTRY, Sandbox
 from .image_registry import ImageRegistry
+from . import branding as B
 
 
 def ensure_doctl_available() -> bool:
@@ -311,7 +306,7 @@ def cmd_create(args: argparse.Namespace) -> int:
 
     registry_display = f"{registry}/{DEFAULT_IMAGE_OWNER}"
 
-    print(f"Creating sandbox...")
+    print(B.MSG_CREATING)
     print(f"  Image: {args.image}")
     print(f"  Type: {component_type}")
     print(f"  Registry: {registry_display}")
@@ -330,7 +325,7 @@ def cmd_create(args: argparse.Namespace) -> int:
             registry=registry,
             wait_ready=not args.no_wait,
         )
-        print(f"\nSandbox created successfully!")
+        print(f"\n{B.MSG_CREATED}")
         print(f"  ID: {sandbox.app_id}")
         url = sandbox.get_url()
         if url:
@@ -340,11 +335,11 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"  Status: {sandbox.status}")
 
         if args.no_wait:
-            print("\nNote: Sandbox may still be deploying. Use 'sandbox list' to check status.")
+            print(f"\n{B.MSG_STILL_DEPLOYING.format(cmd=B.CLI_COMMAND)}")
 
         return 0
     except Exception as e:
-        print(f"Error creating sandbox: {e}")
+        print(B.MSG_CREATE_ERROR.format(error=e))
         return 1
 
 
@@ -400,7 +395,7 @@ def cmd_list(args: argparse.Namespace) -> int:
             return 0
 
         if not sandboxes:
-            print("No sandboxes found.")
+            print(B.MSG_LIST_EMPTY)
             return 0
 
         # Print table header
@@ -418,7 +413,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
         return 0
     except Exception as e:
-        print(f"Error listing sandboxes: {e}")
+        print(B.MSG_LIST_ERROR.format(error=e))
         return 1
 
 
@@ -435,7 +430,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
     if args.all:
         # Delete all sandboxes
         if not args.force:
-            confirm = input("Are you sure you want to delete ALL sandboxes? [y/N]: ")
+            confirm = input(B.MSG_DELETE_CONFIRM_ALL)
             if confirm.lower() != "y":
                 print("Cancelled.")
                 return 0
@@ -473,7 +468,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
             sandboxes.append(app)
 
         if not sandboxes:
-            print("No sandboxes to delete.")
+            print(B.MSG_DELETE_NONE)
             return 0
 
         deleted = 0
@@ -482,12 +477,12 @@ def cmd_delete(args: argparse.Namespace) -> int:
             name = app.get("spec", {}).get("name", "")
             try:
                 deployer.delete_app(app_id)
-                print(f"Deleted: {name} ({app_id})")
+                print(B.MSG_DELETED.format(name=name, app_id=app_id))
                 deleted += 1
             except Exception as e:
-                print(f"Failed to delete {name}: {e}")
+                print(B.MSG_DELETE_FAILED.format(name=name, error=e))
 
-        print(f"\nDeleted {deleted} sandbox(es).")
+        print(f"\n{B.MSG_DELETE_COUNT.format(count=deleted)}")
         return 0
 
     # Delete specific sandbox
@@ -513,17 +508,17 @@ def cmd_delete(args: argparse.Namespace) -> int:
         ]
 
         if not matching:
-            print(f"Sandbox '{target}' not found.")
+            print(B.MSG_NOT_FOUND.format(name=target))
             return 1
 
         app_id = matching[0].get("id", "")
 
     try:
         deployer.delete_app(app_id)
-        print(f"Deleted sandbox: {target}")
+        print(B.MSG_DELETE_SUCCESS.format(target=target))
         return 0
     except Exception as e:
-        print(f"Error deleting sandbox: {e}")
+        print(B.MSG_DELETE_ERROR.format(error=e))
         return 1
 
 
@@ -553,7 +548,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
         ]
 
         if not matching:
-            print(f"Sandbox '{target}' not found.")
+            print(B.MSG_NOT_FOUND.format(name=target))
             return 1
 
         app_id = matching[0].get("id", "")
@@ -569,7 +564,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
         return result.exit_code
     except Exception as e:
-        print(f"Error executing command: {e}")
+        print(B.MSG_EXEC_ERROR.format(error=e))
         return 1
 
 
@@ -613,7 +608,7 @@ def cmd_image_add(args: argparse.Namespace) -> int:
         image_registry.update_status(args.name, "validating", validation_pid=proc.pid)
 
         print(f"\nValidation started (PID: {proc.pid})")
-        print(f"Check status with: sandbox image status {args.name}")
+        print(f"Check status with: {B.CLI_COMMAND} image status {args.name}")
 
         return 0
     except ValueError as e:
@@ -675,7 +670,7 @@ def cmd_image_status(args: argparse.Namespace) -> int:
                     for line in f:
                         print(f"  {line}", end="")
             else:
-                print(f"\n  View logs with: sandbox image status {args.name} --logs")
+                print(f"\n  View logs with: {B.CLI_COMMAND} image status {args.name} --logs")
 
         return 0
     except Exception as e:
@@ -762,13 +757,13 @@ def cmd_image_remove(args: argparse.Namespace) -> int:
 def main() -> int:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
-        prog="sandbox",
-        description="Manage sandbox environments on DigitalOcean App Platform",
+        prog=B.CLI_COMMAND,
+        description=B.HELP_MAIN,
     )
     parser.add_argument(
         "--version",
         action="version",
-        version="app-platform-sandbox 0.1.0",
+        version=f"{B.PRODUCT_NAME} {B.PRODUCT_VERSION}",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -776,7 +771,7 @@ def main() -> int:
     # setup command
     setup_parser = subparsers.add_parser(
         "setup",
-        help="Build and push sandbox images to your DOCR registry",
+        help=B.HELP_SETUP,
     )
     setup_parser.add_argument(
         "--registry", "-r",
@@ -814,7 +809,7 @@ def main() -> int:
     # create command
     create_parser = subparsers.add_parser(
         "create",
-        help="Create a new sandbox",
+        help=B.HELP_CREATE,
     )
     create_parser.add_argument(
         "--image", "-i",
@@ -824,7 +819,7 @@ def main() -> int:
     )
     create_parser.add_argument(
         "--name", "-n",
-        help="Name for the sandbox (auto-generated if not provided)",
+        help=B.HELP_ARG_NAME,
     )
     create_parser.add_argument(
         "--region",
@@ -854,7 +849,7 @@ def main() -> int:
     # list command
     list_parser = subparsers.add_parser(
         "list",
-        help="List all sandboxes",
+        help=B.HELP_LIST,
     )
     list_parser.add_argument(
         "--registry", "-r",
@@ -870,12 +865,12 @@ def main() -> int:
     # delete command
     delete_parser = subparsers.add_parser(
         "delete",
-        help="Delete a sandbox",
+        help=B.HELP_DELETE,
     )
     delete_parser.add_argument(
         "name",
         nargs="?",
-        help="Sandbox name to delete",
+        help=B.HELP_ARG_DELETE_NAME,
     )
     delete_parser.add_argument(
         "--registry", "-r",
@@ -900,11 +895,11 @@ def main() -> int:
     # exec command
     exec_parser = subparsers.add_parser(
         "exec",
-        help="Execute a command in a sandbox",
+        help=B.HELP_EXEC,
     )
     exec_parser.add_argument(
         "target",
-        help="Sandbox name or ID",
+        help=B.HELP_ARG_TARGET,
     )
     exec_parser.add_argument(
         "command",
@@ -931,7 +926,7 @@ def main() -> int:
     # image command group
     image_parser = subparsers.add_parser(
         "image",
-        help="Manage custom sandbox images",
+        help=B.HELP_IMAGE,
     )
     image_subparsers = image_parser.add_subparsers(dest="image_command", help="Image commands")
 
