@@ -51,6 +51,15 @@ class ScalingDecision:
     algorithm: str = ""
 
 
+class ScaleUpStrategy(Enum):
+    """Strategy for scaling up the pool."""
+    IMMEDIATE = "immediate"          # Jump directly to target (risky)
+    LINEAR = "linear"                # Add fixed N per interval
+    PERCENTAGE = "percentage"        # Add X% of current per interval
+    EXPONENTIAL = "exponential"      # Double each interval (fast)
+    AIMD = "aimd"                    # Additive Increase (like TCP)
+
+
 @dataclass
 class AdaptiveConfig:
     """Configuration for adaptive scaling."""
@@ -59,6 +68,17 @@ class AdaptiveConfig:
     max_ready: int = 100             # Never exceed this
     target_hit_rate: float = 0.9     # Target 90% pool hits
     target_latency_ms: float = 500   # Target <500ms latency
+
+    # Scale-up parameters
+    scale_up_strategy: ScaleUpStrategy = ScaleUpStrategy.PERCENTAGE
+    scale_up_step: int = 10          # For LINEAR: add this many per step
+    scale_up_percent: float = 0.5    # For PERCENTAGE: add 50% of current
+    scale_up_interval: float = 30    # Seconds between scale-up steps
+    scale_up_max_step: int = 50      # Maximum sandboxes to add in one step
+
+    # Scale-down parameters (always slow)
+    scale_down_percent: float = 0.2  # Remove at most 20% per step
+    scale_down_cooldown: float = 300 # 5 min after last scale-up
 
     # EMA parameters
     ema_alpha: float = 0.3           # Smoothing factor (0.1=slow, 0.5=fast)
@@ -402,7 +422,8 @@ class HybridAdaptivePoolSizer(PoolSizer):
     This is the recommended approach for production:
     1. Base capacity from predictions (handles known patterns)
     2. Reactive buffer for unexpected bursts
-    3. Fast scale-up, slow scale-down (asymmetric)
+    3. Step-wise scale-up (avoids API rate limits)
+    4. Slow scale-down (avoids thrashing)
 
     Similar to AWS/GCP production autoscalers.
     """
@@ -412,12 +433,48 @@ class HybridAdaptivePoolSizer(PoolSizer):
         self.predictive = PredictivePoolSizer(config)
         self.ema = EMAPoolSizer(config)
         self.current_target = config.min_ready
+        self.desired_target = config.min_ready  # What we want to reach
         self.last_scale_up = 0.0
         self.last_scale_down = 0.0
+        self.last_scale_step = 0.0
 
     def record_event(self, event_type: str, timestamp: float = None):
         self.predictive.record_event(event_type, timestamp)
         self.ema.record_event(event_type, timestamp)
+
+    def _calculate_scale_up_step(self, current: int, desired: int) -> int:
+        """Calculate how much to scale up in this step."""
+        gap = desired - current
+        if gap <= 0:
+            return 0
+
+        strategy = self.config.scale_up_strategy
+
+        if strategy == ScaleUpStrategy.IMMEDIATE:
+            # Jump directly (not recommended for large pools)
+            step = gap
+
+        elif strategy == ScaleUpStrategy.LINEAR:
+            # Fixed step size
+            step = min(gap, self.config.scale_up_step)
+
+        elif strategy == ScaleUpStrategy.PERCENTAGE:
+            # Percentage of current (at least 1, at most max_step)
+            step = max(1, int(current * self.config.scale_up_percent))
+            step = min(step, gap, self.config.scale_up_max_step)
+
+        elif strategy == ScaleUpStrategy.EXPONENTIAL:
+            # Double current, but cap at gap
+            step = min(max(1, current), gap, self.config.scale_up_max_step)
+
+        elif strategy == ScaleUpStrategy.AIMD:
+            # Additive increase: fixed step (like TCP slow start)
+            step = min(self.config.scale_up_step, gap)
+
+        else:
+            step = min(gap, self.config.scale_up_step)
+
+        return min(step, self.config.scale_up_max_step)
 
     def calculate_target(self, metrics: ScalingMetrics) -> ScalingDecision:
         now = time.time()
@@ -440,20 +497,43 @@ class HybridAdaptivePoolSizer(PoolSizer):
         recent_max = max(metrics.current_ready + metrics.current_in_use, base_target)
         burst_buffer = int((recent_max - base_target) * self.config.burst_capacity_ratio)
 
-        new_target = base_target + burst_buffer
+        self.desired_target = base_target + burst_buffer
+        self.desired_target = max(
+            self.config.min_ready,
+            min(self.config.max_ready, self.desired_target)
+        )
 
-        # Asymmetric scaling: fast up, slow down
-        if new_target > self.current_target:
-            # Scale up immediately
-            self.current_target = new_target
-            self.last_scale_up = now
-        elif new_target < self.current_target:
-            # Scale down slowly (wait 5 minutes since last scale up)
-            if now - self.last_scale_up > 300:
-                # Scale down by at most 20% at a time
-                max_decrease = max(1, int(self.current_target * 0.2))
-                self.current_target = max(new_target, self.current_target - max_decrease)
+        reason_parts = [f"pred={pred_decision.target_ready}", f"ema={ema_decision.target_ready}"]
+
+        # Step-wise scaling
+        if self.desired_target > self.current_target:
+            # Scale UP - check if enough time has passed since last step
+            time_since_step = now - self.last_scale_step
+
+            if time_since_step >= self.config.scale_up_interval or self.last_scale_step == 0:
+                step = self._calculate_scale_up_step(self.current_target, self.desired_target)
+                self.current_target += step
+                self.last_scale_up = now
+                self.last_scale_step = now
+                reason_parts.append(f"scale_up +{step} ({self.config.scale_up_strategy.value})")
+            else:
+                wait_time = self.config.scale_up_interval - time_since_step
+                reason_parts.append(f"scale_up pending ({wait_time:.0f}s)")
+
+        elif self.desired_target < self.current_target:
+            # Scale DOWN - slow and cautious
+            time_since_scale_up = now - self.last_scale_up
+
+            if time_since_scale_up > self.config.scale_down_cooldown:
+                # Scale down by at most X% at a time
+                max_decrease = max(1, int(self.current_target * self.config.scale_down_percent))
+                actual_decrease = min(max_decrease, self.current_target - self.desired_target)
+                self.current_target -= actual_decrease
                 self.last_scale_down = now
+                reason_parts.append(f"scale_down -{actual_decrease}")
+            else:
+                cooldown_remaining = self.config.scale_down_cooldown - time_since_scale_up
+                reason_parts.append(f"scale_down cooldown ({cooldown_remaining:.0f}s)")
 
         self.current_target = max(
             self.config.min_ready,
@@ -462,9 +542,8 @@ class HybridAdaptivePoolSizer(PoolSizer):
 
         return ScalingDecision(
             target_ready=self.current_target,
-            confidence=(pred_decision.confidence + 0.7) / 2,  # Average with EMA confidence
-            reason=f"Hybrid: pred={pred_decision.target_ready}, ema={ema_decision.target_ready}, "
-                   f"burst_buffer={burst_buffer}",
+            confidence=(pred_decision.confidence + 0.7) / 2,
+            reason=f"Hybrid[desired={self.desired_target}]: " + ", ".join(reason_parts),
             predicted_demand=pred_decision.predicted_demand,
             algorithm="hybrid"
         )
