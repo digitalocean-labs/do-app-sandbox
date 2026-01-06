@@ -268,6 +268,7 @@ class SandboxPool:
             # Got from pool - instant!
             latency_ms = (time.time() - start_time) * 1000
             self._record_acquire(from_pool=True, latency_ms=latency_ms)
+            sandbox._from_pool = True  # Mark for external tracking
             return sandbox
 
         # Pool empty - handle based on config
@@ -279,6 +280,7 @@ class SandboxPool:
         sandbox = await self._create_sandbox_with_retry(timeout=timeout)
         latency_ms = (time.time() - start_time) * 1000
         self._record_acquire(from_pool=False, latency_ms=latency_ms)
+        sandbox._from_pool = False  # Mark for external tracking
         return sandbox
 
     async def _try_acquire_from_pool(self) -> Optional[Sandbox]:
