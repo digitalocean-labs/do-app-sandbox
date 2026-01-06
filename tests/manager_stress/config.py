@@ -60,6 +60,7 @@ class TestConfig:
     scale_down_delay: int = 60        # Delay between destructions
     cooldown_after_acquire: int = 180 # Pause replenishment after acquire
     max_warm_age: int = 1800          # Max time a sandbox stays warm (30 min)
+    health_check_interval: int = 60   # Health check frequency (0 to disable)
 
     # Sandbox defaults
     region: str = "syd1"
@@ -316,12 +317,244 @@ def get_full_stress() -> ScenarioConfig:
     )
 
 
+def get_mega_stress_8hr() -> ScenarioConfig:
+    """8-hour mega stress test with 500 sandboxes."""
+    return ScenarioConfig(
+        name="mega_stress_8hr",
+        description="8-hour stress test - 200 users, 500 sandbox pool, comprehensive corner case testing",
+        duration_seconds=28800,  # 8 hours
+        user_groups=[
+            # === SUSTAINED LOAD USERS (100 users) ===
+            UserGroupConfig(
+                name="python_sustained_heavy",
+                count=20,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(600, 1800),  # 10-30 min
+                categories=["compute", "mixed"],
+            ),
+            UserGroupConfig(
+                name="python_sustained_medium",
+                count=15,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(300, 900),  # 5-15 min
+                categories=["io", "network", "mixed"],
+            ),
+            UserGroupConfig(
+                name="python_sustained_light",
+                count=15,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.RANDOM,
+                task_duration_range=(60, 300),  # 1-5 min
+                categories=["compute", "io", "idle"],
+            ),
+            UserGroupConfig(
+                name="node_sustained_heavy",
+                count=20,
+                image=ImageType.NODE,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(600, 1800),
+                categories=["compute", "mixed"],
+            ),
+            UserGroupConfig(
+                name="node_sustained_medium",
+                count=15,
+                image=ImageType.NODE,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(300, 900),
+                categories=["async", "io", "mixed"],
+            ),
+            UserGroupConfig(
+                name="node_sustained_light",
+                count=15,
+                image=ImageType.NODE,
+                pattern=LoadPattern.RANDOM,
+                task_duration_range=(60, 300),
+                categories=["compute", "io", "idle"],
+            ),
+
+            # === BURST USERS (60 users) ===
+            UserGroupConfig(
+                name="python_burst_fast",
+                count=15,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(30, 180),  # 30s-3 min (high churn)
+                categories=["compute", "io"],
+            ),
+            UserGroupConfig(
+                name="python_burst_medium",
+                count=15,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(120, 600),  # 2-10 min
+                categories=["mixed", "network"],
+            ),
+            UserGroupConfig(
+                name="node_burst_fast",
+                count=15,
+                image=ImageType.NODE,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(30, 180),
+                categories=["async", "io"],
+            ),
+            UserGroupConfig(
+                name="node_burst_medium",
+                count=15,
+                image=ImageType.NODE,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(120, 600),
+                categories=["mixed", "compute"],
+            ),
+
+            # === PEAK HOURS USERS (40 users) ===
+            UserGroupConfig(
+                name="python_peak",
+                count=20,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.PEAK_HOURS,
+                task_duration_range=(180, 900),  # 3-15 min
+                categories=["compute", "io", "mixed", "idle"],
+            ),
+            UserGroupConfig(
+                name="node_peak",
+                count=20,
+                image=ImageType.NODE,
+                pattern=LoadPattern.PEAK_HOURS,
+                task_duration_range=(180, 900),
+                categories=["compute", "async", "mixed", "idle"],
+            ),
+        ],
+        test_config=TestConfig(
+            python_pool=PoolConfig(ImageType.PYTHON, target_ready=50, max_sandboxes=250),
+            node_pool=PoolConfig(ImageType.NODE, target_ready=50, max_sandboxes=250),
+            max_total_sandboxes=500,
+            max_concurrent_creates=15,  # Slightly higher for scale
+            idle_timeout=180,           # 3 min before scale-down (longer for stability)
+            scale_down_delay=30,        # 30s between destructions
+            cooldown_after_acquire=300, # 5 min cooldown
+            max_warm_age=1200,          # 20 min max age (more cycling)
+        ),
+        idle_periods=[
+            # Regular idle periods to test scale-down
+            (7200, 900),    # 15 min idle at 2 hr mark
+            (14400, 900),   # 15 min idle at 4 hr mark
+            (21600, 900),   # 15 min idle at 6 hr mark
+            (25200, 1800),  # 30 min idle at 7 hr mark (wind-down)
+        ],
+    )
+
+
+def get_corner_case_blitz() -> ScenarioConfig:
+    """Aggressive corner case testing with rapid timing."""
+    return ScenarioConfig(
+        name="corner_case_blitz",
+        description="2-hour aggressive corner case testing with tight timing parameters",
+        duration_seconds=7200,  # 2 hours
+        user_groups=[
+            # High-frequency short tasks (maximize pool churn)
+            UserGroupConfig(
+                name="python_rapid",
+                count=30,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(15, 60),  # 15s-1min
+                categories=["compute", "io"],
+            ),
+            UserGroupConfig(
+                name="node_rapid",
+                count=30,
+                image=ImageType.NODE,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(15, 60),
+                categories=["async", "io"],
+            ),
+            # Long-running to test max_warm_age expiry
+            UserGroupConfig(
+                name="python_long",
+                count=10,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(300, 400),  # ~5-6 min (around max_warm_age)
+                categories=["mixed", "idle"],
+            ),
+            UserGroupConfig(
+                name="node_long",
+                count=10,
+                image=ImageType.NODE,
+                pattern=LoadPattern.STEADY,
+                task_duration_range=(300, 400),
+                categories=["mixed", "idle"],
+            ),
+        ],
+        test_config=TestConfig(
+            python_pool=PoolConfig(ImageType.PYTHON, target_ready=10, max_sandboxes=50),
+            node_pool=PoolConfig(ImageType.NODE, target_ready=10, max_sandboxes=50),
+            max_total_sandboxes=100,
+            max_concurrent_creates=10,
+            idle_timeout=30,            # 30s (aggressive)
+            scale_down_delay=5,         # 5s (very aggressive)
+            cooldown_after_acquire=60,  # 1 min
+            max_warm_age=300,           # 5 min (trigger cycling)
+            health_check_interval=10,   # 10s (very frequent - stress health checks)
+        ),
+        idle_periods=[
+            (1800, 300),   # 5 min idle at 30 min
+            (3600, 300),   # 5 min idle at 60 min
+            (5400, 300),   # 5 min idle at 90 min
+        ],
+    )
+
+
+def get_scale_boundary() -> ScenarioConfig:
+    """Test scale boundaries and limits."""
+    return ScenarioConfig(
+        name="scale_boundary",
+        description="4-hour test pushing scale boundaries - 150 users, 300 sandboxes",
+        duration_seconds=14400,  # 4 hours
+        user_groups=[
+            # All users burst at start to test max creation
+            UserGroupConfig(
+                name="python_all",
+                count=75,
+                image=ImageType.PYTHON,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(120, 600),
+                categories=["compute", "io", "mixed"],
+            ),
+            UserGroupConfig(
+                name="node_all",
+                count=75,
+                image=ImageType.NODE,
+                pattern=LoadPattern.BURST,
+                task_duration_range=(120, 600),
+                categories=["compute", "async", "mixed"],
+            ),
+        ],
+        test_config=TestConfig(
+            python_pool=PoolConfig(ImageType.PYTHON, target_ready=75, max_sandboxes=150),
+            node_pool=PoolConfig(ImageType.NODE, target_ready=75, max_sandboxes=150),
+            max_total_sandboxes=300,
+            max_concurrent_creates=20,  # Test higher concurrency
+        ),
+        idle_periods=[
+            (3600, 1200),   # 20 min idle at 1 hr (full scale-down test)
+            (7200, 1200),   # 20 min idle at 2 hr
+            (10800, 1200),  # 20 min idle at 3 hr
+        ],
+    )
+
+
 SCENARIOS = {
     "quick_validation": get_quick_validation,
     "burst_test": get_burst_test,
     "steady_state": get_steady_state,
     "scale_cycle": get_scale_cycle,
     "full_stress": get_full_stress,
+    "mega_stress_8hr": get_mega_stress_8hr,
+    "corner_case_blitz": get_corner_case_blitz,
+    "scale_boundary": get_scale_boundary,
 }
 
 
