@@ -96,8 +96,8 @@ Long-running agent workloads (e.g., Claude Code sandbox) where:
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │              Health Monitor (async)                       │  │
 │  │                                                           │  │
-│  │   - Periodic health checks on pooled sandboxes            │  │
-│  │   - Removes unhealthy sandboxes                           │  │
+│  │   - Periodic sandbox.is_ready() checks on pooled sandboxes│  │
+│  │   - Removes unhealthy sandboxes (is_ready() == False)     │  │
 │  │   - Cycles out sandboxes exceeding max_warm_age           │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
@@ -169,7 +169,7 @@ from do_sandbox import SandboxManager, PoolConfig
 manager = SandboxManager(
     # Global settings
     max_total_sandboxes=100,       # Cost ceiling across all pools
-    max_concurrent_creates=5,      # Rate limit for API calls
+    max_concurrent_creates=10,     # Rate limit for API calls
 
     # Default config for pools not explicitly configured
     default_pool_config=PoolConfig(
@@ -185,13 +185,13 @@ manager = SandboxManager(
             target_ready=5,            # Maintain 5 ready when active
 
             # Adaptive scaling
-            idle_timeout=300,          # 5 min no acquires → start scaling down
+            idle_timeout=60,           # 1 min no acquires → start scaling down
             scale_down_delay=60,       # Destroy 1 per minute when idle
             cooldown_after_acquire=120,# Pause scale-down 2 min after acquire
 
-            # Health
+            # Health (uses sandbox.is_ready() check)
             max_warm_age=1800,         # Cycle out after 30 min warming
-            health_check_interval=60,  # Check health every 60s
+            health_check_interval=60,  # Check is_ready() every 60s
 
             # Behavior
             on_empty="create",         # "create" (fallback) | "fail" (fast-fail)
@@ -322,7 +322,7 @@ async def main():
 |-----------|------|---------|-------------|
 | `max_ready` | int | 10 | Maximum sandboxes to keep warming in pool |
 | `target_ready` | int | 0 | Target number of ready sandboxes when pool is active |
-| `idle_timeout` | int | 300 | Seconds of no acquires before scaling down |
+| `idle_timeout` | int | 60 | Seconds of no acquires before scaling down |
 | `scale_down_delay` | int | 60 | Seconds between sandbox destructions during scale-down |
 | `cooldown_after_acquire` | int | 120 | Seconds to pause scale-down after an acquire |
 | `max_warm_age` | int | 1800 | Max seconds a sandbox can warm before being cycled out |
@@ -336,7 +336,7 @@ async def main():
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `max_total_sandboxes` | int | None | Global limit across all pools (None = unlimited) |
-| `max_concurrent_creates` | int | 5 | Max parallel sandbox creations (rate limit) |
+| `max_concurrent_creates` | int | 10 | Max parallel sandbox creations (rate limit) |
 | `pools` | Dict | {} | Per-image pool configurations |
 | `default_pool_config` | PoolConfig | PoolConfig() | Config for images without explicit pool config |
 | `sandbox_defaults` | Dict | {} | Default kwargs passed to Sandbox.create() |
@@ -476,7 +476,7 @@ class SandboxPool:
 
 1. **Replenisher**: Runs per-pool, maintains `target_ready` count
 2. **Idle Monitor**: Runs globally, checks all pools for idle timeout
-3. **Health Monitor**: Runs per-pool, validates sandbox health
+3. **Health Monitor**: Runs per-pool, calls `sandbox.is_ready()` to validate health
 
 ### 8.4 Graceful Shutdown Sequence
 
@@ -522,11 +522,11 @@ class SandboxPool:
 4. **Sandbox recycling**: Clean and reuse sandboxes (requires careful state isolation)
 5. **Cost reporting**: Integration with billing APIs for cost visibility
 
-### 10.2 Open Questions
+### 10.2 Resolved Design Decisions
 
-1. **Sandbox TTL from platform**: Do App Platform apps have maximum lifetime? Need to verify and handle.
-2. **Rate limits**: Exact rate limits for `doctl apps create`? Need to tune `max_concurrent_creates`.
-3. **Health check implementation**: What constitutes "healthy"? Simple is_ready() or deeper probe?
+1. **Idle timeout default**: 60 seconds before scale-down begins
+2. **Max concurrent creates**: 10 parallel sandbox creations allowed
+3. **Health check implementation**: Use simple `sandbox.is_ready()` - lightweight and sufficient
 
 ---
 
