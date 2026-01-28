@@ -292,35 +292,31 @@ print(f"Access at: {port_info.url}")
 
 See [`docs/service_mode.md`](docs/service_mode.md) for sessions, log streaming, and HTTP API reference.
 
-### Tailscale SSH (Browser-Based SSH)
+### Tailscale SSH (Terminal SSH Access)
 
-SSH into containers via your browser - no VPN client needed on your laptop:
+SSH into containers from your terminal via Tailscale's private network. Enables SSH tunneling, VS Code Remote, scp/rsync, and more.
 
-```yaml
-# app.yaml for Tailscale-enabled sandbox
-services:
-  - name: sandbox
-    image:
-      registry_type: GHCR
-      registry: bikramkgupta
-      repository: sandbox-tailscale-python  # or sandbox-tailscale-node
-      tag: latest
-    envs:
-      - key: TS_AUTHKEY
-        value: "tskey-auth-xxxxx"  # From Tailscale admin
-        type: SECRET
-      - key: TS_HOSTNAME
-        value: "my-sandbox"
+```bash
+# One-time setup: install Tailscale on your laptop
+brew install tailscale  # macOS
+tailscale up            # authenticate
+
+# SSH into your container
+ssh sandbox@100.64.1.2
+
+# Port forwarding for local development
+ssh -L 3000:localhost:3000 sandbox@100.64.1.2
 ```
 
 **Quick setup:**
-1. Create Tailscale account at [login.tailscale.com](https://login.tailscale.com)
-2. Generate auth key: **Settings** > **Keys** > **Generate auth key**
-3. Add SSH ACL: **Access Controls** > add `{"ssh": [{"action": "accept", "src": ["autogroup:admin"], "dst": ["*"], "users": ["sandbox"]}]}`
-4. Deploy container with `TS_AUTHKEY` environment variable
-5. SSH via browser: **Machines** > find your container > click **SSH**
+1. Install Tailscale on laptop: [tailscale.com/download](https://tailscale.com/download)
+2. Create account & authenticate: `tailscale up`
+3. Generate auth key: **Settings** > **Keys** > **Generate auth key**
+4. Add SSH ACL: `{"ssh": [{"action": "accept", "src": ["autogroup:member"], "dst": ["*"], "users": ["sandbox"]}]}`
+5. Deploy container with `TS_AUTHKEY` env var
+6. Find IP: `tailscale status` → SSH: `ssh sandbox@<ip>`
 
-See [`docs/tailscale_ssh.md`](docs/tailscale_ssh.md) for full setup guide.
+See [`docs/tailscale_ssh.md`](docs/tailscale_ssh.md) for full setup guide with VS Code Remote, port forwarding examples, and troubleshooting.
 
 ## CLI Reference
 
