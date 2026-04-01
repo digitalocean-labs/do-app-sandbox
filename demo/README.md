@@ -1,4 +1,4 @@
-# Deploy Conference Demo
+# App Sandbox Demo
 
 Flask + HTMX todo app with 3 feature variants, showcasing the `do-app-sandbox` SDK's **snapshot, fork, preview** workflow.
 

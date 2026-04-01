@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy Conference Demo Runner.
+"""App Sandbox Demo Runner.
 
 Orchestrates the full "Snapshot, Fork, Preview" demo flow:
 1. Create a sandbox and deploy the base todo app
@@ -271,7 +271,7 @@ def run_cleanup(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Deploy Conference Demo Runner")
+    parser = argparse.ArgumentParser(description="App Sandbox Demo Runner")
     parser.add_argument("--pre-snapshot", action="store_true", help="Pre-create snapshot for faster live demo")
     parser.add_argument("--from-snapshot", type=str, help="Use existing snapshot ID")
     parser.add_argument("--cleanup", action="store_true", help="Delete all demo sandboxes")
