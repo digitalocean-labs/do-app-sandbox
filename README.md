@@ -21,6 +21,7 @@ A Python SDK that provides secure agent sandboxes on DigitalOcean App Platform f
 ## Documentation
 - **Service Mode** (streaming, port exposure, sessions): [`docs/service_mode.md`](docs/service_mode.md)
 - **SandboxManager** (pre-warmed pools): [`docs/sandbox_manager.md`](docs/sandbox_manager.md)
+- **Snapshots vs Custom Images** (choosing the right startup strategy): [`docs/snapshots_vs_custom_images.md`](docs/snapshots_vs_custom_images.md)
 - Reference tables for SDK and CLI parameters/outputs: [`docs/sandbox_reference.md`](docs/sandbox_reference.md)
 - Troubleshooting existing App Platform apps: [`docs/troubleshooting_existing_apps.md`](docs/troubleshooting_existing_apps.md)
 - Release process checklist: [`docs/release_checklist.md`](docs/release_checklist.md)
