@@ -1,5 +1,6 @@
 # Environment and secrets
 .env
+.env.*
 
 # Python
 __pycache__/
@@ -15,6 +16,14 @@ build/
 .venv/
 venv/
 ENV/
+
+# Demo artifacts (local only)
+demo/.snapshot_id
+demo/.deploy_results.txt
+demo/.benchmark_results.json
+demo/deploy-demo-flow.pptx
+demo/create-pptx.js
+demo/deploy_continue.py
 
 # Testing
 .pytest_cache/
@@ -52,3 +61,4 @@ logging.json
 .claude-logs/
 uv.lock
 
+1-pager/
