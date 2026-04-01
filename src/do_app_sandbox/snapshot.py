@@ -209,32 +209,18 @@ class SnapshotManager:
             SnapshotNotFoundError: If snapshot doesn't exist
             SnapshotRestoreError: If restoration fails
         """
-        # Verify snapshot exists
-        metadata = self.get_snapshot(snapshot_id)
-        if metadata is None:
-            raise SnapshotNotFoundError(f"Snapshot not found: {snapshot_id}")
-
-        # Download via presigned URL
+        # Generate presigned download URL directly — skip metadata check
+        # since the caller already knows the snapshot_id exists
         spaces_key = f"{self._prefix}{snapshot_id}/archive.tar.gz"
         download_url = self._spaces.generate_presigned_download_url(spaces_key, expires_in=3600)
-        archive = f"/tmp/restore_{snapshot_id}.tar.gz"
 
-        # Download in sandbox
-        download_cmd = f"curl -sSfL -o {archive} '{download_url}'"
-        download_result = sandbox.exec(download_cmd, timeout=timeout)
+        # Single piped command: download and extract in one exec call
+        # No temp file, no cleanup needed — streams directly into tar
+        restore_cmd = f"curl -sSfL '{download_url}' | tar -xzf - -C {target_path}"
+        result = sandbox.exec(restore_cmd, timeout=timeout)
 
-        if not download_result.success:
-            raise SnapshotRestoreError(f"Failed to download snapshot: {download_result.stderr}")
-
-        # Extract archive
-        extract_cmd = f"tar -xzf {archive} -C {target_path}"
-        extract_result = sandbox.exec(extract_cmd, timeout=timeout)
-
-        if not extract_result.success:
-            raise SnapshotRestoreError(f"Failed to extract snapshot: {extract_result.stderr}")
-
-        # Cleanup archive
-        sandbox.exec(f"rm -f {archive}")
+        if not result.success:
+            raise SnapshotRestoreError(f"Failed to restore snapshot: {result.stderr}")
 
         return True
 

@@ -309,6 +309,7 @@ class Sandbox:
         region: str | None = None,
         instance_size: str | None = None,
         mode: SandboxMode = SandboxMode.WORKER,
+        component_type: str | None = None,
         service_config: ServiceConfig | None = None,
         registry: str | None = None,
         api_token: str | None = None,
@@ -394,8 +395,9 @@ class Sandbox:
             api_token=api_token,
         )
 
-        # Determine component type based on mode
-        component_type = "worker" if mode == SandboxMode.WORKER else "service"
+        # Determine component type: explicit param > derived from mode
+        if component_type is None:
+            component_type = "worker" if mode == SandboxMode.WORKER else "service"
 
         # Create the app
         app_info, service_token = deployer.create_app(
