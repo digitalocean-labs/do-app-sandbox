@@ -236,6 +236,7 @@ class AsyncSandbox:
         wait_ready: bool = True,
         timeout: int = 600,
         spaces_config: SpacesConfig | dict | None = None,
+        snapshot_id: str | None = None,
     ) -> "AsyncSandbox":
         """Create a new sandbox environment asynchronously.
 
@@ -253,6 +254,10 @@ class AsyncSandbox:
             timeout: Maximum time to wait for ready state
             spaces_config: Optional SpacesConfig or dict for large file transfers.
                           Required for files >= 5MB.
+            snapshot_id: Optional snapshot ID to restore during container startup.
+                        The snapshot is restored as part of the container entrypoint,
+                        so the sandbox is ready with the snapshot contents when
+                        create() returns. Requires spaces_config or SPACES_* env vars.
 
         Returns:
             An AsyncSandbox instance
@@ -260,13 +265,10 @@ class AsyncSandbox:
         Example:
             >>> sandbox = await AsyncSandbox.create(registry="my-registry", image="python")
 
-            >>> # Create a worker
-            >>> worker = await AsyncSandbox.create(image="node", component_type="worker")
-
-            >>> # With Spaces for large files
+            >>> # Create with snapshot restored at startup
             >>> sandbox = await AsyncSandbox.create(
-            ...     registry="my-registry",
             ...     image="python",
+            ...     snapshot_id="snap-abc123",
             ...     spaces_config={"bucket": "my-bucket", "region": "nyc3"}
             ... )
         """
@@ -282,6 +284,7 @@ class AsyncSandbox:
             wait_ready=wait_ready,
             timeout=timeout,
             spaces_config=spaces_config,
+            snapshot_id=snapshot_id,
         )
         return cls(sync_sandbox)
 

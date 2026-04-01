@@ -198,6 +198,7 @@ class Deployer:
         component_type: str = "service",
         mode: SandboxMode = SandboxMode.WORKER,
         service_config: ServiceConfig | None = None,
+        env_vars: dict[str, str] | None = None,
     ) -> tuple[str, str | None]:
         """Generate an app spec YAML for a sandbox.
 
@@ -262,6 +263,27 @@ class Deployer:
                 instance_size=self.instance_size,
             )
 
+        # Inject additional env vars if provided
+        if env_vars:
+            env_lines = ""
+            for key, value in env_vars.items():
+                env_lines += f"      - key: {key}\n        scope: RUN_TIME\n        value: \"{value}\"\n"
+
+            if "envs:" in spec:
+                # Append to existing envs block
+                spec = spec.replace("    envs:\n", f"    envs:\n{env_lines}")
+            else:
+                # Add envs block to the component
+                if "services:" in spec:
+                    # Insert before health_check or at end of service block
+                    if "health_check:" in spec:
+                        spec = spec.replace("    health_check:", f"    envs:\n{env_lines}    health_check:")
+                    else:
+                        spec += f"    envs:\n{env_lines}"
+                elif "workers:" in spec:
+                    # Append envs to worker component
+                    spec += f"    envs:\n{env_lines}"
+
         return spec, api_token
 
     def create_app(
@@ -271,6 +293,7 @@ class Deployer:
         component_type: str = "service",
         mode: SandboxMode = SandboxMode.WORKER,
         service_config: ServiceConfig | None = None,
+        env_vars: dict[str, str] | None = None,
     ) -> tuple[AppInfo, str | None]:
         """Create a new App Platform application.
 
@@ -280,6 +303,7 @@ class Deployer:
             component_type: "service" for HTTP endpoint, "worker" for background process
             mode: SandboxMode.WORKER (default) or SandboxMode.SERVICE (streaming)
             service_config: Configuration for service mode
+            env_vars: Optional extra env vars to inject into the app spec
 
         Returns:
             Tuple of (AppInfo with the created app details, API token if service mode)
@@ -288,7 +312,7 @@ class Deployer:
             SandboxCreationError: If app creation fails
         """
         # Generate app spec
-        spec, api_token = self._generate_app_spec(name, image, component_type, mode, service_config)
+        spec, api_token = self._generate_app_spec(name, image, component_type, mode, service_config, env_vars=env_vars)
 
         # Write spec to temp file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:

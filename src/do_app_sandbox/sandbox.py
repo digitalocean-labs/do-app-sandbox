@@ -316,6 +316,7 @@ class Sandbox:
         wait_ready: bool = True,
         timeout: int = 600,
         spaces_config: SpacesConfig | dict | None = None,
+        snapshot_id: str | None = None,
     ) -> "Sandbox":
         """Create a new sandbox environment.
 
@@ -339,12 +340,17 @@ class Sandbox:
             timeout: Maximum time to wait for ready state (in seconds)
             spaces_config: Optional SpacesConfig or dict for large file transfers.
                           Required for files >= 5MB and for snapshots/hibernation.
+            snapshot_id: Optional snapshot ID to restore during container startup.
+                        The snapshot is restored as part of the container entrypoint,
+                        so the sandbox is ready with the snapshot contents when
+                        create() returns. Requires spaces_config or SPACES_* env vars.
 
         Returns:
             A Sandbox instance connected to the new environment
 
         Raises:
             SandboxCreationError: If sandbox creation fails
+            SpacesNotConfiguredError: If snapshot_id is set but Spaces is not configured
             ValueError: If an invalid image is specified
 
         Example:
@@ -353,13 +359,12 @@ class Sandbox:
             >>> result = sandbox.exec("python --version")
             >>> sandbox.delete()
 
-            >>> # Service mode with streaming
+            >>> # Create with snapshot restored at startup
             >>> sandbox = Sandbox.create(
             ...     image="python",
-            ...     mode=SandboxMode.SERVICE
+            ...     snapshot_id="snap-abc123",
+            ...     spaces_config={"bucket": "my-bucket", "region": "nyc3"}
             ... )
-            >>> for event in sandbox.exec_stream("pip install requests"):
-            ...     print(event.data, end="")
 
             >>> # With Spaces for snapshots
             >>> sandbox = Sandbox.create(
@@ -387,6 +392,35 @@ class Sandbox:
         if not name:
             name = f"sandbox-{uuid.uuid4().hex[:8]}"
 
+        # Generate presigned snapshot URL if snapshot_id provided
+        snapshot_env_vars = None
+        if snapshot_id:
+            from .snapshot import DEFAULT_SNAPSHOT_PREFIX
+            from .spaces import SpacesClient, create_spaces_config_from_env
+
+            resolved_spaces_config = spaces_config
+            if resolved_spaces_config is None:
+                resolved_spaces_config = create_spaces_config_from_env()
+            if resolved_spaces_config is None:
+                from .exceptions import SpacesNotConfiguredError
+
+                raise SpacesNotConfiguredError(
+                    "Spaces configuration required for snapshot restore. "
+                    "Set spaces_config or SPACES_BUCKET, SPACES_REGION, "
+                    "SPACES_ACCESS_KEY, and SPACES_SECRET_KEY environment variables."
+                )
+            if isinstance(resolved_spaces_config, dict):
+                from .types import SpacesConfig as SpacesConfigClass
+
+                resolved_spaces_config = SpacesConfigClass(**resolved_spaces_config)
+
+            spaces_client = SpacesClient(resolved_spaces_config)
+            snapshot_key = f"{DEFAULT_SNAPSHOT_PREFIX}{snapshot_id}/archive.tar.gz"
+            presigned_url = spaces_client.generate_presigned_download_url(
+                snapshot_key, expires_in=900
+            )
+            snapshot_env_vars = {"SANDBOX_SNAPSHOT_URL": presigned_url}
+
         # Create deployer and deploy
         deployer = Deployer(
             registry=resolved_registry,
@@ -401,7 +435,8 @@ class Sandbox:
 
         # Create the app
         app_info, service_token = deployer.create_app(
-            name, image, component_type=component_type, mode=mode, service_config=service_config
+            name, image, component_type=component_type, mode=mode, service_config=service_config,
+            env_vars=snapshot_env_vars,
         )
 
         # Wait for ready if requested

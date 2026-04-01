@@ -12,6 +12,16 @@ echo "Sandbox container starting..."
 echo "Node version: $(node --version)"
 echo "npm version: $(npm --version)"
 
+# Restore snapshot if URL provided (set by Sandbox.create(snapshot_id=...))
+if [ -n "$SANDBOX_SNAPSHOT_URL" ]; then
+    echo "Restoring snapshot..."
+    if curl -sSfL "$SANDBOX_SNAPSHOT_URL" | tar -xzf - -C /; then
+        echo "Snapshot restored successfully."
+    else
+        echo "WARNING: Snapshot restore failed (exit code $?). Continuing without snapshot."
+    fi
+fi
+
 # Start the health server on port 9090 (background)
 # This handles App Platform health checks so user apps don't need to
 /usr/local/bin/sandbox-health-server &

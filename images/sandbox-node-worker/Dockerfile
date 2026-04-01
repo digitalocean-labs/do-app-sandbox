@@ -36,6 +36,8 @@ WORKDIR /workspace
 ENV SANDBOX_MODE=worker
 ENV NODE_ENV=development
 
-# Default: keep container running for doctl console access
-# Workers don't expose any HTTP ports
-CMD ["tail", "-f", "/dev/null"]
+# Copy entrypoint script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# Run via entrypoint (handles snapshot restore before keeping alive)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

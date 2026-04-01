@@ -90,11 +90,9 @@ async def deploy_variant(name, variant_file, snapshot_id):
         image="python",
         component_type="service",
         spaces_config=SPACES_CONFIG,
+        snapshot_id=snapshot_id,
     )
-    print(f"  [{name}] Ready in {time.time() - t0:.1f}s, restoring snapshot...")
-
-    await asyncio.to_thread(sb._sync_sandbox.restore_snapshot, snapshot_id)
-    print(f"  [{name}] Restored, uploading variant...")
+    print(f"  [{name}] Ready with snapshot in {time.time() - t0:.1f}s, uploading variant...")
 
     await sb.filesystem.upload_file(str(variant_file), "/home/sandbox/app/app.py")
 

@@ -57,11 +57,14 @@ ENV PYTHONUNBUFFERED=1
 RUN useradd -m -s /bin/bash sandbox && \
     chown -R sandbox:sandbox /workspace /opt/sandbox_api
 
+# Copy entrypoint script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
 # Expose HTTP port for App Platform ingress
 EXPOSE 8080
 
 # Run as non-root user
 USER sandbox
 
-# Run the FastAPI server
-CMD ["python3", "-m", "uvicorn", "sandbox_api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run via entrypoint (handles snapshot restore before starting server)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

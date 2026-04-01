@@ -83,6 +83,17 @@ with Sandbox.create(image="python") as sandbox:
     result = sandbox.exec("echo 'Hello'")
 ```
 
+### Create from Snapshot
+```python
+# Restore snapshot during container startup — zero extra SDK calls
+sandbox = Sandbox.create(
+    image="python",
+    snapshot_id="snap-abc123",
+    spaces_config={"bucket": "my-bucket", "region": "nyc3"}
+)
+# Sandbox is ready with snapshot contents already restored
+```
+
 ### Async API (AsyncSandbox)
 ```python
 from do_app_sandbox import AsyncSandbox
@@ -90,6 +101,13 @@ from do_app_sandbox import AsyncSandbox
 sandbox = await AsyncSandbox.create(image="python")
 result = await sandbox.exec("python --version")
 await sandbox.delete()
+
+# Async with snapshot
+sandbox = await AsyncSandbox.create(
+    image="python",
+    snapshot_id="snap-abc123",
+    spaces_config={"bucket": "my-bucket", "region": "nyc3"}
+)
 ```
 
 ### Pool Management (SandboxManager)

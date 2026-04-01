@@ -470,6 +470,22 @@ sandbox.exec("cd /home/sandbox && unzip -o app.zip -d app && rm app.zip")
 | `wait_ready` | `True` | Wait for sandbox to be ready |
 | `timeout` | `600` | Max wait time in seconds |
 | `api_token` | From env | DigitalOcean API token for doctl auth (optional if doctl is already authenticated) |
+| `snapshot_id` | `None` | Snapshot ID to restore during container startup (requires `spaces_config`) |
+
+### Create from Snapshot
+
+Restore a snapshot as part of sandbox creation — zero additional SDK calls:
+
+```python
+sandbox = Sandbox.create(
+    image="python",
+    snapshot_id="snap-abc123",
+    spaces_config={"bucket": "my-bucket", "region": "nyc3"}
+)
+# Sandbox is ready with snapshot contents already restored
+```
+
+The snapshot is restored during container startup, overlapping with provisioning time.
 
 ### Creating a Worker (No HTTP Endpoint)
 

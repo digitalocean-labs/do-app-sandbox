@@ -1,6 +1,6 @@
 [project]
 name = "do-app-sandbox"
-version = "0.2.3"
+version = "0.2.4"
 description = "Experimental sandbox API for DigitalOcean App Platform - secure agent sandboxes for running untrusted code"
 readme = "README.md"
 license = {text = "MIT"}
