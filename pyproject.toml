@@ -1,7 +1,7 @@
 [project]
 name = "do-app-sandbox"
-version = "0.2.2"
-description = "Experimental sandbox API for DigitalOcean App Platform - provides sandbox-like capabilities similar to Cloudflare Sandbox"
+version = "0.2.3"
+description = "Experimental sandbox API for DigitalOcean App Platform - secure agent sandboxes for running untrusted code"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10.12"

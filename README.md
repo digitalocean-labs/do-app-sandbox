@@ -2,7 +2,7 @@
 
 > **Experimental**: This is a personal project and is not officially supported by DigitalOcean. APIs may change without notice.
 
-A Python SDK that provides sandbox-like capabilities for DigitalOcean App Platform, similar to Cloudflare Sandbox.
+A Python SDK that provides secure agent sandboxes on DigitalOcean App Platform for running untrusted code.
 
 > **For AI Assistants**: See [do-app-platform-skills](https://github.com/digitalocean-labs/do-app-platform-skills/) for comprehensive App Platform guidance including deployment, troubleshooting, and this sandbox SDK.
 
