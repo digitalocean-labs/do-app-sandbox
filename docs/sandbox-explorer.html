@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DO App Sandbox — Architecture Explorer</title>
+<style>
+:root{--bg:#06090f;--s1:#0d1220;--s2:#131a2e;--bdr:#1e2d4a;--acc:#0069ff;--grn:#10b981;--red:#ef4444;--org:#f59e0b;--pur:#8b5cf6;--cyn:#06b6d4;--t1:#e2e8f0;--t2:#94a3b8;--t3:#64748b}
+*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-serif;overflow:hidden;height:100vh}
+.hdr{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,9,15,.9);backdrop-filter:blur(16px);border-bottom:1px solid var(--bdr);padding:10px 20px;display:flex;align-items:center;gap:10px}
+.logo{width:30px;height:30px;background:var(--acc);border-radius:8px;display:grid;place-items:center;font:800 13px/1 system-ui;color:#fff}
+.hdr h1{font-size:14px;font-weight:700}.hdr h1 span{color:var(--acc)}
+.badge{background:var(--org);color:#000;font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px}
+.crumbs{display:flex;align-items:center;gap:3px;margin-left:auto;font-size:12px}
+.crumb{color:var(--acc);cursor:pointer;padding:4px 10px;border-radius:6px;transition:.2s;font-weight:600}.crumb:hover{background:#0069ff22;text-decoration:underline}
+.sep{color:var(--t3);font-size:10px}.cur{color:var(--t2)}
+canvas#bg{position:fixed;inset:0;top:46px;z-index:0;pointer-events:none}
+.vp{position:fixed;inset:0;top:46px;overflow:hidden;z-index:1}
+.ly{position:absolute;inset:0;overflow-y:auto;opacity:0;pointer-events:none;transition:opacity .4s,transform .5s cubic-bezier(.22,1,.36,1)}
+.ly.zin{transform:scale(.75)}.ly.zout{transform:scale(1.4)}
+.ly.active{opacity:1;pointer-events:all;transform:scale(1)!important}
+
+/* Back */
+.back-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;background:rgba(13,18,32,.85);backdrop-filter:blur(12px);border:1.5px solid var(--bdr);color:var(--acc);font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;position:sticky;top:8px;z-index:10;margin-bottom:8px}
+.back-btn:hover{background:var(--s2);border-color:var(--acc);transform:translateX(-3px)}
+
+/* SVG */
+.svg-node{cursor:pointer;transition:filter .2s}.svg-node:hover{filter:drop-shadow(0 0 12px rgba(0,105,255,.35))}
+.flow-dash{animation:fd 1.5s linear infinite}@keyframes fd{to{stroke-dashoffset:-20}}
+
+/* Home */
+.home-wrap{display:flex;flex-direction:column;align-items:center;padding:20px 20px 60px;gap:16px}
+.home-wrap h2{font-size:20px;font-weight:800;text-align:center}.home-wrap>p{font-size:13px;color:var(--t2);text-align:center}
+.home-svg{max-width:880px;width:95vw}.home-svg svg{width:100%}
+.jgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;max-width:880px;width:95vw}
+.jcard{background:var(--s1);border:1.5px solid var(--bdr);border-radius:12px;padding:14px;cursor:pointer;transition:all .25s;display:flex;gap:10px;align-items:flex-start}
+.jcard:hover{border-color:var(--acc);transform:translateY(-3px);box-shadow:0 8px 20px #0069ff10}
+.jcard .ji{font-size:24px;width:40px;height:40px;display:grid;place-items:center;background:var(--s2);border-radius:10px;flex-shrink:0}
+.jcard h3{font-size:12px;font-weight:700;margin-bottom:2px}.jcard p{font-size:10.5px;color:var(--t2);line-height:1.4}
+
+/* Layer view */
+.layer-wrap{display:flex;flex-direction:column;align-items:center;padding:20px;gap:14px}
+.layer-wrap h2{font-size:20px;font-weight:800}.layer-wrap>p{font-size:13px;color:var(--t2);max-width:650px;text-align:center;line-height:1.5}
+.layer-svg{max-width:820px;width:95vw;background:var(--s1);border:1px solid var(--bdr);border-radius:16px;padding:20px;overflow-x:auto}
+.layer-svg svg{width:100%;min-width:600px}
+.drag-hint{font-size:11px;color:var(--t3);text-align:center;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:6px}
+.drag-hint span{display:inline-block;width:16px;height:16px;border:1.5px solid var(--t3);border-radius:4px;font-size:9px;text-align:center;line-height:16px}
+.svg-node.dragging{cursor:grabbing;filter:drop-shadow(0 0 20px rgba(0,105,255,.5))!important}
+.svg-node{cursor:grab}
+
+/* Journey */
+.jv-wrap{display:flex;flex-direction:column;align-items:center;padding:20px;gap:14px}
+.jv-wrap h2{font-size:20px;font-weight:800;text-align:center}.jv-wrap>p{font-size:13px;color:var(--t2);text-align:center;max-width:550px;line-height:1.6}
+.cmp{display:flex;gap:14px;max-width:600px;width:100%;flex-wrap:wrap;justify-content:center}
+.cmp-box{flex:1;min-width:230px;background:var(--s1);border-radius:14px;padding:16px;border:1.5px solid var(--bdr);text-align:center}
+.cmp-box h3{font-size:13px;font-weight:700;margin-bottom:4px}
+.cmp-box .big{font-size:30px;font-weight:800;margin:6px 0}
+.cmp-box p{font-size:11px;color:var(--t2)}
+.steps{display:flex;flex-direction:column;max-width:550px;width:100%}
+.step{display:flex;gap:12px;align-items:flex-start;opacity:0;transform:translateY(10px);animation:stepIn .4s ease forwards}
+@keyframes stepIn{to{opacity:1;transform:none}}
+.step-ico{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;font-size:20px;flex-shrink:0;border:2px solid var(--bdr);background:var(--s1);z-index:2}
+.step-bd{flex:1;padding-bottom:18px;position:relative}
+.step-bd::before{content:'';position:absolute;left:-28px;top:44px;bottom:0;width:2px;background:var(--bdr)}
+.step:last-child .step-bd::before{display:none}
+.step-bd h3{font-size:12px;font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:6px}
+.step-bd p{font-size:11px;color:var(--t2);line-height:1.5}
+.step-bd .albl{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;background:var(--s2);color:var(--cyn);border:1px solid #06b6d430}
+.loc{font-size:9px;padding:2px 6px;border-radius:5px;font-weight:600}
+.loc-local{background:#0069ff12;color:var(--acc);border:1px solid #0069ff25}
+.loc-sdk{background:#8b5cf612;color:var(--pur);border:1px solid #8b5cf625}
+.loc-do{background:#10b98112;color:var(--grn);border:1px solid #10b98125}
+.loc-container{background:#f59e0b12;color:var(--org);border:1px solid #f59e0b25}
+
+/* Module detail */
+.mod-wrap{display:flex;flex-direction:column;align-items:center;padding:20px;gap:12px}
+.mod-hero{max-width:700px;width:100%;background:var(--s1);border:1.5px solid var(--bdr);border-radius:14px;padding:18px;position:relative;overflow:hidden}
+.mod-hero .bar{position:absolute;top:0;left:0;right:0;height:3px}
+.mod-hero h2{font-size:17px;font-weight:800;margin:4px 0 2px;display:flex;align-items:center;gap:8px}
+.mod-hero .analogy{font-size:13px;color:var(--t2);line-height:1.6;margin-top:6px;font-style:italic;border-left:3px solid var(--acc);padding-left:10px}
+.cap-title{max-width:700px;width:100%;font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--cyn);font-weight:700}
+.cap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;max-width:700px;width:100%}
+.cap{background:var(--s1);border:1.5px solid var(--bdr);border-radius:12px;padding:14px;cursor:pointer;transition:all .25s;position:relative}
+.cap:hover{border-color:var(--acc);transform:translateY(-3px);box-shadow:0 6px 20px #0069ff10}
+.cap .cap-ico{font-size:22px;margin-bottom:4px}
+.cap h4{font-size:12px;font-weight:700;margin-bottom:3px}
+.cap p{font-size:10.5px;color:var(--t2);line-height:1.4}
+.cap .cap-link{display:flex;align-items:center;gap:4px;margin-top:6px;font-size:10px;font-weight:700;color:var(--acc);padding:3px 8px;background:#0069ff08;border:1px solid #0069ff20;border-radius:6px;width:fit-content}
+.cap .cap-link:hover{background:#0069ff15}
+.cap.cap-bug{border-color:#ef444430}.cap.cap-bug:hover{border-color:var(--red)}
+.cap.cap-bug h4{color:var(--red)}
+.cap.cap-dead{border-style:dashed;opacity:.6}.cap.cap-dead:hover{opacity:.8}
+.used-by-title{max-width:700px;width:100%;font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--grn);font-weight:700;margin-top:4px}
+.used-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;max-width:700px;width:100%}
+.ub{background:var(--s1);border:1.5px solid var(--bdr);border-radius:12px;padding:12px;cursor:pointer;transition:all .25s;display:flex;align-items:center;gap:10px}
+.ub:hover{border-color:var(--grn);transform:translateY(-2px)}
+.ub .ub-arr{color:var(--grn);font-size:16px;flex-shrink:0}
+.ub h4{font-size:12px;font-weight:700}.ub p{font-size:10px;color:var(--t2)}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="logo">S</div><h1><span>DO App</span> Sandbox</h1><span class="badge">v0.2.2</span>
+  <div class="crumbs" id="crumbs"></div>
+</div>
+<canvas id="bg"></canvas>
+<div class="vp">
+  <div class="ly active" id="ly-home"></div>
+  <div class="ly" id="ly-layer"></div>
+  <div class="ly" id="ly-journey"></div>
+  <div class="ly" id="ly-module"></div>
+</div>
+
+<script>
+// Particles
+!function(){const c=document.getElementById('bg'),x=c.getContext('2d');let w,h,P=[];function rs(){w=c.width=innerWidth;h=c.height=innerHeight;P=[];for(let i=0;i<45;i++)P.push({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-.5)*.2,vy:(Math.random()-.5)*.2,r:Math.random()*1.2+.3})}function dr(){x.clearRect(0,0,w,h);P.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=w;if(p.x>w)p.x=0;if(p.y<0)p.y=h;if(p.y>h)p.y=0;x.beginPath();x.arc(p.x,p.y,p.r,0,6.28);x.fillStyle='rgba(0,105,255,.1)';x.fill()});for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){const d=Math.hypot(P[i].x-P[j].x,P[i].y-P[j].y);if(d<100){x.beginPath();x.moveTo(P[i].x,P[i].y);x.lineTo(P[j].x,P[j].y);x.strokeStyle=`rgba(0,105,255,${.03*(1-d/100)})`;x.stroke()}}requestAnimationFrame(dr)}rs();dr();addEventListener('resize',rs)}();
+
+// ===== LAYER GRAPH DEFINITIONS =====
+const LG={
+  sdk:{title:"SDK Layer",color:"#0069ff",desc:"The public API surface your code uses directly. Three active modules, one disconnected experiment.",
+    W:740,H:240,
+    nodes:[
+      {id:"async_sandbox",x:30,y:10,w:180,h:56,lbl:"⚡ AsyncSandbox",sub:"async wrapper",c:"#0069ff"},
+      {id:"sandbox",x:30,y:155,w:180,h:56,lbl:"🎛️ Sandbox",sub:"the front desk",c:"#0069ff"},
+      {id:"manager",x:330,y:82,w:190,h:56,lbl:"🏊 SandboxManager",sub:"warm pool",c:"#10b981"},
+      {id:"adaptive_pool",x:580,y:82,w:140,h:56,lbl:"📈 AdaptivePool",sub:"unused / dead code",c:"#ef4444",dash:true}
+    ],
+    edges:[
+      {f:"async_sandbox",t:"sandbox",lbl:"wraps every call via asyncio.to_thread()"},
+      {f:"manager",t:"sandbox",lbl:"creates & pools sandboxes for instant access"}
+    ]
+  },
+  engine:{title:"Execution Engine",color:"#8b5cf6",desc:"Internal plumbing that does the actual work: deploying containers, running commands, moving files, managing processes.",
+    W:780,H:370,
+    nodes:[
+      {id:"deployer",x:20,y:15,w:150,h:56,lbl:"📋 Deployer",sub:"YAML + doctl",c:"#f59e0b"},
+      {id:"executor",x:310,y:15,w:150,h:56,lbl:"📟 Executor",sub:"PTY commands",c:"#8b5cf6"},
+      {id:"service_client",x:590,y:15,w:165,h:56,lbl:"🌐 ServiceClient",sub:"HTTP commands",c:"#8b5cf6"},
+      {id:"filesystem",x:120,y:160,w:160,h:56,lbl:"📂 FileSystem",sub:"file transfers",c:"#06b6d4"},
+      {id:"process",x:430,y:160,w:150,h:56,lbl:"⚙️ Process",sub:"background tasks",c:"#06b6d4"},
+      {id:"snapshot",x:170,y:295,w:150,h:56,lbl:"📸 Snapshot",sub:"save / restore",c:"#f59e0b"},
+      {id:"spaces",x:520,y:295,w:140,h:56,lbl:"☁️ Spaces",sub:"S3 storage",c:"#8b5cf6"}
+    ],
+    edges:[
+      {f:"filesystem",t:"executor",lbl:"runs shell commands (echo, cat, tar) via PTY"},
+      {f:"process",t:"executor",lbl:"runs ps, kill, nohup via PTY"},
+      {f:"filesystem",t:"spaces",lbl:"large files (≥250KB) via presigned URLs"},
+      {f:"snapshot",t:"spaces",lbl:"tar.gz archives uploaded/downloaded"}
+    ]
+  },
+  infra:{title:"DigitalOcean Infrastructure",color:"#10b981",desc:"External services, container images, CLI tools, and foundational types that the entire SDK sits on top of.",
+    W:740,H:340,
+    nodes:[
+      {id:"app_platform",x:20,y:15,w:160,h:56,lbl:"🏗️ App Platform",sub:"managed PaaS",c:"#10b981"},
+      {id:"doctl",x:280,y:15,w:140,h:56,lbl:"🔧 doctl CLI",sub:"remote control",c:"#10b981"},
+      {id:"do_spaces",x:530,y:15,w:145,h:56,lbl:"💾 DO Spaces",sub:"object storage",c:"#10b981"},
+      {id:"worker_image",x:20,y:135,w:160,h:56,lbl:"🐳 Worker Image",sub:"Ubuntu + lang",c:"#10b981"},
+      {id:"service_image",x:270,y:135,w:165,h:56,lbl:"🖥️ Service Image",sub:"FastAPI inside",c:"#8b5cf6"},
+      {id:"health_server",x:530,y:135,w:155,h:56,lbl:"💚 Health Server",sub:"Go binary :9090",c:"#f59e0b"},
+      {id:"types",x:20,y:260,w:130,h:56,lbl:"📐 types.py",sub:"data shapes",c:"#64748b"},
+      {id:"exceptions",x:200,y:260,w:155,h:56,lbl:"🚨 exceptions.py",sub:"error catalog",c:"#64748b"},
+      {id:"cli",x:410,y:260,w:120,h:56,lbl:"💻 CLI",sub:"sandbox command",c:"#ec4899"},
+      {id:"image_registry",x:580,y:260,w:140,h:56,lbl:"🗂️ ImageRegistry",sub:"local JSON",c:"#f59e0b"}
+    ],
+    edges:[
+      {f:"doctl",t:"app_platform",lbl:"every doctl command becomes a DO API call"},
+      {f:"health_server",t:"worker_image",lbl:"built into the image, runs on :9090"},
+      {f:"cli",t:"image_registry",lbl:"tracks custom images in local JSON file"}
+    ]
+  }
+};
+
+// ===== MODULE DATA =====
+const MOD={
+  sandbox:{ico:"🎛️",name:"Sandbox",file:"sandbox.py",color:"#0069ff",layer:"sdk",
+    analogy:"Like a hotel concierge — you tell it what you need and it coordinates everything behind the scenes.",
+    caps:[
+      {ico:"🚀",t:"Create sandbox",d:"Deploys a new container on App Platform with the right Docker image",goto:"deployer",gl:"Deployer writes YAML → calls doctl"},
+      {ico:"💬",t:"Execute commands (Worker)",d:"Sends your command through a PTY terminal tunnel into the container",goto:"executor",gl:"Executor wraps cmd → pexpect → doctl console"},
+      {ico:"🌐",t:"Execute commands (Service)",d:"Sends your command as an HTTP request to the container's API",goto:"service_client",gl:"ServiceClient → POST /api/exec"},
+      {ico:"📂",t:"Manage files",d:"Upload, download, read, write files inside the container",goto:"filesystem",gl:"FileSystem handles base64 or Spaces routing"},
+      {ico:"⚙️",t:"Background processes",d:"Launch long-running tasks, check their status, read their logs",goto:"process",gl:"ProcessManager → nohup + PID tracking"},
+      {ico:"📸",t:"Save & restore state",d:"Snapshot the container's filesystem to Spaces, restore onto a new container",goto:"snapshot",gl:"SnapshotManager → tar.gz → Spaces"},
+      {ico:"💤",t:"Hibernate / wake",d:"Hibernate saves state + deletes container ($0). Wake restores on a new container.",goto:"snapshot",gl:"Combines Snapshot + Deployer"},
+      {ico:"🗑️",t:"Delete",d:"Destroys the App Platform app and frees all resources",goto:"deployer",gl:"Deployer → doctl apps delete"}
+    ],
+    used_by:[
+      {id:"async_sandbox",why:"wraps every method for async/await usage"},
+      {id:"manager",why:"creates sandboxes to fill the warm pool"},
+      {id:"cli",why:"CLI commands go through Sandbox"}
+    ],
+    bugs:["Service mode: file & process managers are None — any call crashes","get_from_id() always creates Worker — can't reconnect Service sandboxes","hibernate() isn't atomic — can orphan apps on partial failure","Git credentials embedded in URLs (insecure)"]
+  },
+  async_sandbox:{ico:"⚡",name:"AsyncSandbox",file:"async_sandbox.py",color:"#0069ff",layer:"sdk",
+    analogy:"A translator that converts synchronous Sandbox calls into async calls so they don't block your event loop.",
+    caps:[
+      {ico:"🔄",t:"Wraps sync → async",d:"Every single method calls asyncio.to_thread(sandbox.method)",goto:"sandbox",gl:"Delegates everything to sync Sandbox"},
+      {ico:"📂",t:"AsyncFileSystem",d:"Wraps all file operations too, same pattern",goto:"sandbox",gl:"to_thread(filesystem.method)"},
+      {ico:"⚠️",t:"Broken create()",d:"Passes wrong parameter name — crashes immediately",bug:true},
+      {ico:"⚠️",t:"Broken get_from_id()",d:"Passes a parameter that doesn't exist — also crashes",bug:true}
+    ],
+    used_by:[{id:"manager",why:"SandboxManager uses AsyncSandbox for pool ops"}],
+    bugs:["create() passes component_type= instead of mode= → TypeError","get_from_id() passes registry= which doesn't exist → TypeError"]
+  },
+  manager:{ico:"🏊",name:"SandboxManager",file:"manager.py",color:"#10b981",layer:"sdk",
+    analogy:"Like a car rental lot that keeps cars warmed up. When you arrive, you grab one instantly instead of waiting for it to start.",
+    caps:[
+      {ico:"⚙️",t:"Configure pools",d:"Set target_ready (how many to keep warm), max_ready, idle_timeout per image type"},
+      {ico:"🔄",t:"Background replenish loop",d:"Every 5 seconds, checks if pool is below target and creates more sandboxes",goto:"async_sandbox",gl:"Creates via AsyncSandbox.create()"},
+      {ico:"📦",t:"Queue of ready sandboxes",d:"Pre-warmed sandboxes sit in an asyncio.Queue waiting to be grabbed"},
+      {ico:"⚡",t:"Instant acquire()",d:"Pops a sandbox from the queue — milliseconds instead of minutes"},
+      {ico:"🧹",t:"Stale cleanup",d:"Sandboxes older than max_warm_age (30 min) are recycled automatically"},
+      {ico:"📊",t:"Metrics & OTEL hooks",d:"Tracks ready count, in-use count, total created — OpenTelemetry compatible"},
+      {ico:"📸",t:"Snapshot restore",d:"Can acquire sandboxes pre-loaded with a saved state",goto:"snapshot",gl:"Restores snapshot after acquire"}
+    ],
+    used_by:[],
+    bugs:["release() has no identity check — double-release corrupts count","sync wrappers use asyncio.run() — deadlocks with existing event loops","A retry method exists but is never called"]
+  },
+  adaptive_pool:{ico:"📈",name:"AdaptivePool",file:"adaptive_pool.py",color:"#ef4444",layer:"sdk",
+    analogy:"A weather forecaster for sandbox demand — designed to predict how many you'll need. But it was never plugged in.",
+    caps:[
+      {ico:"📊",t:"EMA Sizer",d:"Exponential moving average smooths demand signal",dead:true},
+      {ico:"🎛️",t:"PID Controller",d:"Proportional-integral-derivative feedback loop",dead:true},
+      {ico:"🔮",t:"Predictive Sizer",d:"Calendar-based prediction of demand patterns",dead:true},
+      {ico:"📈",t:"Queuing Theory",d:"Uses Little's Law to estimate needed pool size",dead:true},
+      {ico:"🔌",t:"Not connected",d:"No module imports this file — all 737 lines are dead code",bug:true}
+    ],
+    used_by:[],
+    bugs:["Uses random.poisson() which doesn't exist → crash","Calendar calc breaks across month boundaries","Not integrated anywhere — completely dead code"]
+  },
+  deployer:{ico:"📋",name:"Deployer",file:"deployer.py",color:"#f59e0b",layer:"engine",
+    analogy:"Fills out the official paperwork (YAML) to rent a server, then submits the order to DigitalOcean via doctl.",
+    caps:[
+      {ico:"📝",t:"Write YAML app spec",d:"Picks from 3 templates: Worker (PTY), Service (HTTP), Streaming Service (SSE)"},
+      {ico:"🖼️",t:"Resolve Docker image",d:"Maps 'python' → ghcr.io/bikramkgupta/sandbox-python:latest"},
+      {ico:"🔧",t:"Call doctl",d:"Runs doctl apps create --spec file.yaml as a subprocess on your machine",goto:"doctl",gl:"subprocess.run → doctl CLI"},
+      {ico:"⏳",t:"Poll until ready",d:"Runs doctl apps get every few seconds until status = ACTIVE (up to 5 min)"},
+      {ico:"📋",t:"Return AppInfo",d:"Gives back app ID, public URL, status, and the auth token for Service mode"},
+      {ico:"🗑️",t:"Delete app",d:"Runs doctl apps delete ID --force",goto:"doctl",gl:"subprocess.run → doctl CLI"}
+    ],
+    used_by:[{id:"sandbox",why:"create() and delete() go through Deployer"},{id:"cli",why:"CLI create/delete commands use Deployer"}],
+    bugs:["YAML built with .format() — special characters break the spec","Image tags evaluated at import — env changes ignored after"]
+  },
+  executor:{ico:"📟",name:"Executor",file:"executor.py",color:"#8b5cf6",layer:"engine",
+    analogy:"A robot that types commands into a remote terminal. It uses pexpect to control a live shell session inside the container.",
+    caps:[
+      {ico:"🔌",t:"Open PTY connection",d:"Spawns doctl apps console via pexpect — creates a live terminal into the container",goto:"doctl",gl:"pexpect.spawn('doctl apps console ...')"},
+      {ico:"🎁",t:"Wrap command",d:"Adds exit-code markers + stderr redirect so it can parse the result later"},
+      {ico:"📡",t:"Send through tunnel",d:"Types the wrapped command into the PTY — travels through DO API to container shell"},
+      {ico:"🔍",t:"Watch for markers",d:"Reads output char by char until it finds the EXIT_CODE marker"},
+      {ico:"✂️",t:"Parse & clean",d:"Strips PTY artifacts, extracts stdout, reads stderr from temp file, gets exit code"},
+      {ico:"📦",t:"Return CommandResult",d:"Clean result object with .stdout, .stderr, .exit_code, .success"}
+    ],
+    used_by:[{id:"sandbox",why:"Worker mode exec() goes through Executor"},{id:"filesystem",why:"FileSystem runs shell commands via Executor"},{id:"process",why:"ProcessManager runs ps/kill via Executor"}],
+    bugs:["Special chars in commands can break the wrapper","New pexpect connection per command — expensive","Prompt regex may miss unusual shells"]
+  },
+  service_client:{ico:"🌐",name:"ServiceClient",file:"service_client.py",color:"#8b5cf6",layer:"engine",
+    analogy:"Instead of hacking through a terminal, talks to the container like a browser talks to a website — clean HTTP requests.",
+    caps:[
+      {ico:"📡",t:"POST /api/exec",d:"Sends command as JSON, gets back stdout + stderr + exit code as JSON"},
+      {ico:"📺",t:"POST /api/exec/stream",d:"Gets output line by line via Server-Sent Events (SSE) as the command runs"},
+      {ico:"⚙️",t:"POST /api/exec/background",d:"Starts a background process, returns PID immediately"},
+      {ico:"🔑",t:"Bearer token auth",d:"Every request includes the token generated at sandbox creation"},
+      {ico:"🔀",t:"Port proxy",d:"GET /proxy/{port}/ — forwards requests to any internal port"}
+    ],
+    used_by:[{id:"sandbox",why:"Service mode exec() goes through ServiceClient"}],
+    bugs:["Creates new httpx.Client per request — no connection pooling","httpx required but not in main dependencies"]
+  },
+  filesystem:{ico:"📂",name:"FileSystem",file:"filesystem.py",color:"#06b6d4",layer:"engine",
+    analogy:"A mail carrier — small packages go as letters (base64 over terminal), big packages need a warehouse (Spaces) as intermediary.",
+    caps:[
+      {ico:"📬",t:"Small file transfer",d:"< 250KB: base64 encode → split into 32KB chunks → echo through PTY → base64 decode",goto:"executor",gl:"Runs echo + base64 shell commands"},
+      {ico:"☁️",t:"Large file transfer",d:"≥ 250KB: upload to Spaces → presigned URL → container runs curl to download",goto:"spaces",gl:"SpacesClient → presigned URL → curl"},
+      {ico:"📁",t:"Folder transfer",d:"Creates tar archive → transfers archive → untars inside container"},
+      {ico:"📋",t:"Basic file ops",d:"list_dir, mkdir, rm, exists, chmod, copy, move — all via Executor shell commands",goto:"executor",gl:"Runs ls, mkdir, rm, cp, mv, test"},
+      {ico:"📖",t:"Read & write",d:"read_file uses base64 + cat, write_file uses echo chunks",goto:"executor",gl:"cat → base64 / echo → base64 -d"}
+    ],
+    used_by:[{id:"sandbox",why:"sandbox.filesystem exposes all file operations"}],
+    bugs:["chmod() doesn't sanitize — shell injection risk","Entire file in memory — no streaming","Large upload leaves orphan objects on failure"]
+  },
+  process:{ico:"⚙️",name:"ProcessManager",file:"process.py",color:"#06b6d4",layer:"engine",
+    analogy:"A foreman who starts background jobs, gives you a ticket (PID), and lets you check on or stop them later.",
+    caps:[
+      {ico:"🚀",t:"Launch process",d:"nohup CMD > /tmp/sandbox_proc_UUID.log 2>&1 & echo $! — gets PID back",goto:"executor",gl:"Runs nohup command via Executor"},
+      {ico:"📋",t:"List running processes",d:"Parses output of 'ps aux' to find running processes",goto:"executor",gl:"Runs ps aux via Executor"},
+      {ico:"📖",t:"Read output logs",d:"Cat the /tmp log file to get what the process printed"},
+      {ico:"🛑",t:"Kill process",d:"Sends kill signal by PID or matches a name pattern",goto:"executor",gl:"Runs kill via Executor"},
+      {ico:"⏳",t:"Wait for completion",d:"Polls is_running(pid) in a loop until the process exits"}
+    ],
+    used_by:[{id:"sandbox",why:"sandbox.launch_process() and related methods"}],
+    bugs:["get_output() returns first log found — not necessarily the right PID","Log files never cleaned up — disk fills over time"]
+  },
+  snapshot:{ico:"📸",name:"SnapshotManager",file:"snapshot.py",color:"#f59e0b",layer:"engine",
+    analogy:"Like saving your game. Takes a snapshot of all container files, compresses them, stores in the cloud. Later, load that save onto a new container.",
+    caps:[
+      {ico:"💾",t:"Create snapshot",d:"tar -czf inside container → curl PUT to Spaces with presigned URL",goto:"spaces",gl:"Archive uploaded to Spaces"},
+      {ico:"📥",t:"Restore snapshot",d:"curl GET presigned URL → tar -xzf inside container — files restored",goto:"spaces",gl:"Archive downloaded from Spaces"},
+      {ico:"🏷️",t:"Metadata tracking",d:"Stores JSON alongside archive: timestamp, paths, size, sandbox info"},
+      {ico:"🗂️",t:"Manage snapshots",d:"List, delete, copy between sandboxes, check existence"}
+    ],
+    used_by:[{id:"sandbox",why:"hibernate() and wake() use snapshots"},{id:"manager",why:"Can acquire sandboxes pre-loaded with a snapshot"}],
+    bugs:[]
+  },
+  spaces:{ico:"☁️",name:"SpacesClient",file:"spaces.py",color:"#8b5cf6",layer:"engine",
+    analogy:"A valet for cloud storage — hand it a file, it parks it in DO Spaces. Also gives out temporary parking tickets (presigned URLs).",
+    caps:[
+      {ico:"📤",t:"Upload to Spaces",d:"Direct upload using boto3 SDK — file goes to DO's S3-compatible storage",goto:"do_spaces",gl:"boto3 → DO Spaces API"},
+      {ico:"🔗",t:"Generate presigned URLs",d:"Creates a temporary download link (15 min) so the container can fetch files directly"},
+      {ico:"🔍",t:"Object management",d:"Check if files exist, list objects in a bucket, delete objects"},
+      {ico:"📥",t:"Download from Spaces",d:"Retrieves a file from Spaces to your machine via boto3"}
+    ],
+    used_by:[{id:"filesystem",why:"large files route through Spaces"},{id:"snapshot",why:"archives stored in Spaces"}],
+    bugs:["object_exists() catches all exceptions — hides real errors","get_object() loads entire file into memory"]
+  },
+  app_platform:{ico:"🏗️",name:"App Platform",file:"(managed service)",color:"#10b981",layer:"infra",
+    analogy:"DigitalOcean's hotel for containers. You give it a recipe, it finds a room, moves in your Docker image, and handles networking and health checks.",
+    caps:[
+      {ico:"🐳",t:"Pull & run images",d:"Fetches from GHCR and starts the container in a tiny VM (~$5/mo)"},
+      {ico:"💚",t:"Health checks",d:"Pings :9090 (worker) or :8080 (service) every 10s to verify the container is alive"},
+      {ico:"🌐",t:"HTTP routing",d:"Each app gets a public URL — HTTPS traffic routed to container port 8080"},
+      {ico:"📟",t:"Console PTY sessions",d:"Provides live terminal access to running containers via doctl apps console"},
+      {ico:"📋",t:"Log streaming",d:"Stores stdout/stderr and streams on request (build, deploy, run logs)"}
+    ],
+    used_by:[{id:"deployer",why:"Deployer creates and deletes apps"},{id:"executor",why:"Executor opens console sessions"}],
+    bugs:["Cold start takes 60-120 seconds","Console sessions can drop under load"]
+  },
+  doctl:{ico:"🔧",name:"doctl CLI",file:"(system binary)",color:"#10b981",layer:"infra",
+    analogy:"A universal remote control for DigitalOcean. The SDK presses buttons on this remote by running it as a subprocess.",
+    caps:[
+      {ico:"📋",t:"doctl apps create",d:"Submits YAML app spec to create a new app — used by Deployer",goto:"app_platform",gl:"→ DO API → App Platform"},
+      {ico:"🗑️",t:"doctl apps delete",d:"Destroys an app and all its resources",goto:"app_platform",gl:"→ DO API"},
+      {ico:"🔍",t:"doctl apps get",d:"Fetches app status as JSON — used for polling until ready",goto:"app_platform",gl:"→ DO API"},
+      {ico:"📟",t:"doctl apps console",d:"Opens a live PTY terminal into a running container — used by Executor",goto:"app_platform",gl:"→ WebSocket → Container shell"},
+      {ico:"📋",t:"doctl apps logs -f",d:"Follows runtime/build/deploy logs in real time"}
+    ],
+    used_by:[{id:"deployer",why:"app create/delete/status commands"},{id:"executor",why:"console PTY sessions"}],
+    bugs:[]
+  },
+  do_spaces:{ico:"💾",name:"DO Spaces",file:"(managed service)",color:"#10b981",layer:"infra",
+    analogy:"A giant filing cabinet in the cloud where you can store files, snapshots, and archives. Works like AWS S3.",
+    caps:[
+      {ico:"📦",t:"Object storage",d:"Store any file as an 'object' in a 'bucket' — accessed via S3 API"},
+      {ico:"🔗",t:"Presigned URLs",d:"Temporary download/upload links — container can fetch without credentials"},
+      {ico:"🌐",t:"Internal network",d:"Transfers between Spaces and App Platform stay on DO's network — fast"}
+    ],
+    used_by:[{id:"spaces",why:"SpacesClient makes boto3 calls to this service"}],
+    bugs:[]
+  },
+  worker_image:{ico:"🐳",name:"Worker Image",file:"images/python/ & images/node/",color:"#10b981",layer:"infra",
+    analogy:"A pre-furnished apartment. Ubuntu 24.04 with your language runtime, common tools, and a tiny Go health server already installed.",
+    caps:[
+      {ico:"💚",t:"Health server (:9090)",d:"Tiny Go binary — answers App Platform health checks automatically",goto:"health_server",gl:"Built into the image"},
+      {ico:"🐍",t:"Python 3.13 + uv",d:"Or Node 24 + nvm — fast package management built in"},
+      {ico:"📦",t:"Common tools",d:"curl, git, wget, jq, lsof, procps, netcat, sudo — ready to use"},
+      {ico:"👤",t:"sandbox user",d:"Non-root user with passwordless sudo, workdir at /home/sandbox/app"},
+      {ico:"🔌",t:"Port 8080 free",d:"Your app runs on :8080 — health server uses :9090, no conflict"}
+    ],
+    used_by:[{id:"app_platform",why:"App Platform pulls this image for Worker sandboxes"}],
+    bugs:[]
+  },
+  service_image:{ico:"🖥️",name:"Service Image",file:"images/python-service/",color:"#8b5cf6",layer:"infra",
+    analogy:"Like the Worker apartment but with a butler (FastAPI server) that accepts HTTP commands instead of terminal access.",
+    caps:[
+      {ico:"🌐",t:"FastAPI on :8080",d:"sandbox_api server handles exec, streaming, sessions, port proxy via HTTP"},
+      {ico:"🔑",t:"Token auth",d:"SANDBOX_API_TOKEN env var — Bearer token protects all endpoints"},
+      {ico:"📺",t:"SSE streaming",d:"Server-Sent Events for real-time command output"},
+      {ico:"🔀",t:"Port proxy",d:"/proxy/{port}/ forwards requests to any internal port"}
+    ],
+    used_by:[{id:"app_platform",why:"App Platform pulls this image for Service sandboxes"}],
+    bugs:["Runs as root instead of sandbox user","Node variant bundles Bun+Node+Python — very large"]
+  },
+  health_server:{ico:"💚",name:"Health Server",file:"(Go binary)",color:"#f59e0b",layer:"infra",
+    analogy:"A tiny doorbell that answers 'yes I'm alive!' when App Platform knocks every 10 seconds.",
+    caps:[
+      {ico:"💚",t:"GET /sandbox_health",d:"Returns HTTP 200 — that's literally all it does"},
+      {ico:"⚡",t:"Static Go binary",d:"~5MB, built with CGO_ENABLED=0, starts instantly"},
+      {ico:"🔌",t:"Port 9090 only",d:"Keeps port 8080 completely free for your application"}
+    ],
+    used_by:[{id:"worker_image",why:"Built into worker images, started by entrypoint.sh"}],
+    bugs:["Only in base images — some variant Dockerfiles lack it"]
+  },
+  types:{ico:"📐",name:"types.py",file:"types.py",color:"#64748b",layer:"infra",
+    analogy:"A blueprint library — defines the exact shape of every data structure used across the SDK. No logic, just structure.",
+    caps:[
+      {ico:"🔀",t:"Enums",d:"SandboxMode (WORKER/SERVICE), SandboxState (CREATING/ACTIVE/HIBERNATED/DELETED)"},
+      {ico:"📦",t:"CommandResult",d:"stdout + stderr + exit_code + success property"},
+      {ico:"📋",t:"Data containers",d:"ProcessInfo, FileInfo, AppInfo, SpacesConfig, PoolConfig, PoolMetrics"},
+      {ico:"📸",t:"Snapshot types",d:"SnapshotMetadata, HibernatedSandbox, GitCredentials"}
+    ],
+    used_by:[],
+    bugs:["SpacesConfig repr doesn't redact access keys — leaks secrets in logs"]
+  },
+  exceptions:{ico:"🚨",name:"exceptions.py",file:"exceptions.py",color:"#64748b",layer:"infra",
+    analogy:"An error dictionary — 17 specific exception classes so you know exactly what went wrong.",
+    caps:[
+      {ico:"🏗️",t:"Creation errors",d:"SandboxCreationError, NotFoundError, NotReadyError"},
+      {ico:"💬",t:"Command errors",d:"CommandExecutionError, CommandTimeoutError"},
+      {ico:"📂",t:"File & connection",d:"FileOperationError, ConnectionError"},
+      {ico:"🏊",t:"Pool errors",d:"PoolError, PoolExhaustedError, PoolShutdownError, WarmUpTimeoutError"},
+      {ico:"📸",t:"State errors",d:"SnapshotError, HibernationError, ServiceModeError"}
+    ],
+    used_by:[],
+    bugs:["ConnectionError shadows Python's built-in ConnectionError — confusing"]
+  },
+  cli:{ico:"💻",name:"CLI",file:"cli.py",color:"#ec4899",layer:"infra",
+    analogy:"A command-line tool: 'sandbox create --image python'. Friendly wrapper for when you don't want to write Python code.",
+    caps:[
+      {ico:"🚀",t:"sandbox create",d:"Creates a new sandbox with the specified image type",goto:"sandbox",gl:"Creates a Sandbox instance"},
+      {ico:"💬",t:"sandbox exec",d:"Runs a command inside an existing sandbox",goto:"sandbox",gl:"Calls sandbox.exec()"},
+      {ico:"📋",t:"sandbox list / delete",d:"List all sandboxes or delete one by ID"},
+      {ico:"🖼️",t:"sandbox image add",d:"Validates and registers a custom Dockerfile",goto:"image_registry",gl:"Stores in local JSON"},
+      {ico:"⚙️",t:"sandbox setup",d:"Verifies doctl is installed and authenticated"}
+    ],
+    used_by:[],
+    bugs:["Only offers python/node — custom images not accessible","Validation errors go to /dev/null — can't debug failures"]
+  },
+  image_registry:{ico:"🗂️",name:"ImageRegistry",file:"image_registry.py",color:"#f59e0b",layer:"infra",
+    analogy:"A simple notebook where custom Docker images and their validation status are tracked in a local JSON file.",
+    caps:[
+      {ico:"📝",t:"Add / remove images",d:"Stores image name, tag, validation status in JSON"},
+      {ico:"📋",t:"List images",d:"Read the JSON file and return all registered images"},
+      {ico:"✅",t:"Update validation status",d:"Mark images as validated/failed after testing"}
+    ],
+    used_by:[{id:"cli",why:"CLI image commands use this"},{id:"image_validator",why:"Validator updates status here"}],
+    bugs:["No file locking — concurrent writes corrupt JSON","No atomic write — crash mid-write = corruption","No error handling on json.load"]
+  },
+  image_validator:{ico:"✅",name:"ImageValidator",file:"image_validator.py",color:"#f59e0b",layer:"infra",
+    analogy:"A building inspector for Dockerfiles. Checks requirements, builds the image, runs a test container, verifies health.",
+    caps:[
+      {ico:"🔍",t:"Parse Dockerfile",d:"Regex checks for EXPOSE 8080 and CMD/ENTRYPOINT"},
+      {ico:"🔨",t:"Build image",d:"Runs docker build to verify it compiles"},
+      {ico:"🧪",t:"Test container",d:"docker run -p 18080:8080 → tries GET /health"},
+      {ico:"🧹",t:"Cleanup",d:"docker rm -f the test container"}
+    ],
+    used_by:[{id:"cli",why:"CLI image add command uses validator"}],
+    bugs:["Hardcoded port 18080 — parallel validation clashes","Regex parsing misses multi-stage builds"]
+  }
+};
+
+// ===== JOURNEYS DATA =====
+const JR={
+  cold_start:{title:"Creating a Sandbox (Cold Start)",sub:"When you ask for a fresh sandbox and none are pre-warmed — the full ~90 second journey.",
+    steps:[
+      {ico:"💻",t:"You write the code",w:"loc-local",loc:"Your Machine",d:"You call <b>Sandbox.create('python')</b> — this is the starting gun.",a:"The Sandbox class receives your request and starts orchestrating..."},
+      {ico:"📋",t:"A recipe is written",w:"loc-sdk",loc:"SDK (Deployer)",d:"The <b>Deployer</b> writes a YAML recipe: container image, region, instance size.",a:"Saved to a temp file and handed to doctl..."},
+      {ico:"🔧",t:"doctl places the order",w:"loc-local",loc:"doctl CLI",d:"SDK runs <b>doctl apps create --spec recipe.yaml</b> as a subprocess.",a:"DigitalOcean's API receives the order..."},
+      {ico:"🏗️",t:"App Platform builds it",w:"loc-do",loc:"DigitalOcean Cloud",d:"Pulls the Docker image from GHCR, allocates a VM, starts container. <b>60-120 seconds.</b>",a:"Container starts, health server boots..."},
+      {ico:"💚",t:"Health server says 'alive!'",w:"loc-container",loc:"Inside Container",d:"Go binary on <b>port 9090</b> answers health pings. Separate from your app.",a:"SDK polls to check readiness..."},
+      {ico:"🔄",t:"SDK polls until ready",w:"loc-sdk",loc:"SDK (Sandbox)",d:"Runs <b>doctl apps get APP_ID</b> every few seconds until status = ACTIVE.",a:"Once active, a connection opens..."},
+      {ico:"🔌",t:"PTY connection opens",w:"loc-local",loc:"pexpect",d:"Spawns <b>doctl apps console</b> — a live terminal into the container.",a:null},
+      {ico:"✅",t:"Sandbox is ready!",w:"loc-container",loc:"Ready",d:"You get back a Sandbox object. Run commands, upload files — it's yours.",a:null}
+    ]},
+  warm_pool:{title:"Warm Pool: Instant Sandboxes",sub:"The SandboxManager eliminates cold start by keeping pre-warmed sandboxes in a queue.",
+    cmp:{a:{t:"Cold Start",v:"60–120s",c:"var(--acc)",d:"Full deploy cycle per request"},b:{t:"Warm Pool",v:"< 1s",c:"var(--org)",d:"Already deployed, just grab one"}},
+    steps:[
+      {ico:"⚙️",t:"Configure the pool",w:"loc-local",loc:"Your Code",d:"Create <b>SandboxManager</b> with target_ready=3, max_ready=10.",a:"Manager starts its background loop..."},
+      {ico:"🔄",t:"Background loop runs",w:"loc-sdk",loc:"SandboxPool",d:"Every <b>5 seconds</b>: are we below target? If yes, create more sandboxes in background.",a:"Created sandboxes join the queue..."},
+      {ico:"📦",t:"Queue holds ready sandboxes",w:"loc-sdk",loc:"asyncio.Queue",d:"Like a vending machine — fully deployed sandboxes stacked and waiting.",a:"You press the button..."},
+      {ico:"⚡",t:"Instant acquire()",w:"loc-local",loc:"Your Code",d:"<b>manager.acquire('python')</b> pops from queue — <b>instant!</b> Pool auto-replenishes.",a:"Pool heals itself to maintain target..."},
+      {ico:"🕐",t:"Stale cleanup",w:"loc-sdk",loc:"Background",d:"Sandboxes older than <b>30 minutes</b> (max_warm_age) are deleted and replaced.",a:null},
+      {ico:"🚪",t:"Shutdown drains pool",w:"loc-sdk",loc:"Shutdown",d:"manager.shutdown() stops creating, deletes all queued sandboxes, cancels tasks.",a:null}
+    ]},
+  exec_worker:{title:"Running Commands (Worker Mode)",sub:"Your command travels through a PTY terminal tunnel into the container and back.",
+    steps:[
+      {ico:"💻",t:"You send a command",w:"loc-local",loc:"Your Code",d:"<b>sandbox.exec('pip install flask')</b>",a:"SDK needs to capture output + exit code reliably..."},
+      {ico:"🎁",t:"Command gets wrapped",w:"loc-sdk",loc:"Executor",d:"Adds exit-code markers + stderr redirect to a temp file.",a:"A fresh PTY connection opens..."},
+      {ico:"🔌",t:"pexpect opens terminal",w:"loc-local",loc:"pexpect",d:"Spawns <b>doctl apps console</b> — live terminal through DO's API.",a:"Wrapped command typed into terminal..."},
+      {ico:"📡",t:"Travels through DO",w:"loc-do",loc:"DO Network",d:"Keystrokes → DO API → App Platform → container's bash shell.",a:"Container runs the command..."},
+      {ico:"⚙️",t:"Container executes",w:"loc-container",loc:"Container",d:"Bash runs it. Output streams back through PTY. Exit code marker printed.",a:"SDK watches for the marker..."},
+      {ico:"🔍",t:"Output parsed",w:"loc-sdk",loc:"Executor",d:"Strips artifacts, extracts stdout, reads stderr, parses exit code.",a:null},
+      {ico:"📦",t:"Clean result returned",w:"loc-local",loc:"Your Code",d:"<b>CommandResult</b> with .stdout, .stderr, .exit_code — all PTY mess hidden.",a:null}
+    ]},
+  exec_service:{title:"Running Commands (Service Mode)",sub:"Cleaner path — HTTP requests to a FastAPI server inside the container.",
+    steps:[
+      {ico:"💻",t:"You send a command",w:"loc-local",loc:"Your Code",d:"Same call: <b>sandbox.exec('python app.py')</b> but sandbox uses SERVICE mode.",a:"SDK makes an HTTP request instead of PTY..."},
+      {ico:"🌐",t:"HTTP POST sent",w:"loc-sdk",loc:"ServiceClient",d:"<b>POST /api/exec</b> with command as JSON + Bearer token auth.",a:"Request goes through App Platform's router..."},
+      {ico:"🔀",t:"App Platform routes it",w:"loc-do",loc:"HTTP Router",d:"Forwards HTTPS request to container's port 8080.",a:"FastAPI server handles it..."},
+      {ico:"🖥️",t:"FastAPI runs command",w:"loc-container",loc:"sandbox_api",d:"Runs subprocess, captures stdout+stderr, returns JSON.",a:null},
+      {ico:"📦",t:"JSON response",w:"loc-local",loc:"Your Code",d:"Parsed into <b>CommandResult</b>. For streaming: SSE sends output line by line.",a:null}
+    ]},
+  files:{title:"Moving Files In & Out",sub:"How files travel between your laptop and a container in the cloud.",
+    cmp:{a:{t:"Small (< 250KB)",v:"base64 via PTY",c:"var(--cyn)",d:"Encoded + chunked through terminal"},b:{t:"Large (≥ 250KB)",v:"via DO Spaces",c:"var(--org)",d:"Upload to cloud → container curls it"}},
+    steps:[
+      {ico:"📄",t:"Small file: base64 path",w:"loc-sdk",loc:"FileSystem",d:"Read file → base64 encode → split into 32KB chunks → <code>echo 'chunk' | base64 -d >> file</code> through PTY.",a:"For large files, a different path..."},
+      {ico:"☁️",t:"Large file: Spaces path",w:"loc-sdk",loc:"SpacesClient",d:"Upload to DO Spaces via boto3 → generate presigned URL (15 min expiry).",a:"Container downloads directly from Spaces..."},
+      {ico:"📥",t:"Container downloads",w:"loc-container",loc:"Container",d:"<b>curl PRESIGNED_URL -o /path/to/file</b> — on DO's internal network, fast!",a:"Folders use tar archives..."},
+      {ico:"📁",t:"Folders: tar trick",w:"loc-sdk",loc:"FileSystem",d:"tar archive → transfer → <b>tar -xf</b> inside container. Same size-based routing.",a:null}
+    ]},
+  logs:{title:"Logs & Communication",sub:"How your machine talks to containers and how logs flow back.",
+    steps:[
+      {ico:"🌍",t:"Network path",w:"loc-local",loc:"Your Machine",d:"All traffic goes through <b>DO's API</b>. No direct connection to container.",a:"Two communication modes..."},
+      {ico:"📟",t:"Worker: PTY tunnel",w:"loc-local",loc:"pexpect + doctl",d:"doctl apps console opens a WebSocket-like tunnel. Every keystroke travels through it.",a:"Great for interactive, fragile for automation..."},
+      {ico:"🌐",t:"Service: HTTP",w:"loc-local",loc:"httpx",d:"Standard HTTPS to app's public URL → App Platform routes to :8080. Supports SSE streaming.",a:"For ongoing logs, there's a third way..."},
+      {ico:"📋",t:"doctl apps logs -f",w:"loc-local",loc:"Your Machine",d:"Follows runtime logs in real time. --type build/deploy/run for different phases.",a:"Background process logs are different..."},
+      {ico:"📝",t:"Background process logs",w:"loc-container",loc:"Container",d:"launch_process() redirects to <b>/tmp/sandbox_proc_UUID.log</b> — read back with cat.",a:null}
+    ]}
+};
+
+// ===== NAVIGATION =====
+let stack=[];let busy=false;
+function goBack(){if(stack.length>=2)go(stack[stack.length-2].v,stack[stack.length-2].id,'out');else if(stack.length===1)go('home',null,'out')}
+function go(v,id,dir){
+  if(busy)return;
+  const prev=document.querySelector('.ly.active');
+  const tgt=document.getElementById('ly-'+(v==='layer'?'layer':v==='journey'?'journey':v==='module'?'module':'home'));
+  dir=dir||(v==='home'?'out':'in');
+
+  if(v==='home'){buildHome();stack=[];}
+  else if(v==='layer'){buildLayer(id);stack=[{v:'layer',id}];}
+  else if(v==='journey'){buildJourney(id);stack=[{v:'journey',id}];}
+  else if(v==='module'){
+    const m=MOD[id];
+    const layId=m?m.layer:'sdk';
+    if(stack.length===0||stack[0].v!=='layer') stack=[{v:'layer',id:layId}];
+    // If last item is a module, replace it; otherwise push
+    if(stack.length>=2&&stack[stack.length-1].v==='module') stack[stack.length-1]={v:'module',id};
+    else stack.push({v:'module',id});
+    buildModule(id);
+  }
+
+  if(prev&&prev!==tgt){
+    busy=true;prev.classList.remove('active');prev.classList.add(dir==='in'?'zout':'zin');
+    setTimeout(()=>{prev.classList.remove('zout','zin');busy=false},450);
+    tgt.classList.remove('zin','zout');tgt.classList.add(dir==='in'?'zin':'zout');
+    void tgt.offsetWidth;tgt.classList.remove('zin','zout');tgt.classList.add('active');
+  } else if(prev===tgt){
+    tgt.style.transition='none';tgt.style.opacity='0';void tgt.offsetWidth;
+    tgt.style.transition='';tgt.style.opacity='';
+  } else tgt.classList.add('active');
+  tgt.scrollTop=0;renderCrumbs();
+}
+function renderCrumbs(){
+  const c=document.getElementById('crumbs');let h=`<span class="crumb" onclick="go('home')">Home</span>`;
+  stack.forEach((s,i)=>{
+    const last=i===stack.length-1;
+    let label=s.v==='layer'?(LG[s.id]?LG[s.id].title:s.id):s.v==='journey'?(JR[s.id]?JR[s.id].title.split('(')[0].trim():s.id):(MOD[s.id]?MOD[s.id].name:s.id);
+    h+=`<span class="sep">›</span><span class="${last?'cur':'crumb'}" ${last?'':`onclick="go('${s.v}','${s.id}','out')"`}>${label}</span>`;
+  });
+  c.innerHTML=h;
+}
+
+// ===== BUILD HOME =====
+function buildHome(){
+  document.getElementById('ly-home').innerHTML=`<div class="home-wrap">
+    <h2>How does the DO App Sandbox work?</h2>
+    <p>Click any layer to zoom in and see how its modules connect</p>
+    <div class="home-svg">
+      <svg viewBox="0 0 860 420" xmlns="http://www.w3.org/2000/svg">
+        <defs><marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4a6fa5"/></marker>
+        <linearGradient id="g1" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#0069ff" stop-opacity=".12"/><stop offset="100%" stop-color="#0069ff" stop-opacity=".02"/></linearGradient>
+        <linearGradient id="g2" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#8b5cf6" stop-opacity=".12"/><stop offset="100%" stop-color="#8b5cf6" stop-opacity=".02"/></linearGradient>
+        <linearGradient id="g3" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#10b981" stop-opacity=".12"/><stop offset="100%" stop-color="#10b981" stop-opacity=".02"/></linearGradient></defs>
+
+        <rect x="20" y="8" width="820" height="36" rx="8" fill="#ffffff04" stroke="#ffffff08"/>
+        <text x="430" y="24" fill="#64748b" font-size="9" font-weight="700" text-anchor="middle" letter-spacing="1.5">YOUR APPLICATION CODE</text>
+        <text x="430" y="36" fill="#475569" font-size="8" text-anchor="middle">from do_app_sandbox import Sandbox</text>
+        <line x1="430" y1="44" x2="430" y2="62" stroke="#4a6fa5" stroke-width="1.5" marker-end="url(#ah)" stroke-dasharray="5,3" class="flow-dash"/>
+        <text x="500" y="56" fill="#06b6d4" font-size="7" font-style="italic">calls SDK</text>
+
+        <g class="svg-node" onclick="go('layer','sdk')">
+          <rect x="20" y="66" width="820" height="80" rx="12" fill="url(#g1)" stroke="#0069ff" stroke-width="1.5"/>
+          <text x="36" y="84" fill="#0069ff" font-size="9" font-weight="800" letter-spacing="1.5">SDK LAYER — click to explore →</text>
+          <rect x="36" y="94" width="130" height="38" rx="7" fill="#0d1220" stroke="#0069ff50"/><text x="101" y="116" fill="#e2e8f0" font-size="10" font-weight="700" text-anchor="middle">🎛️ Sandbox</text>
+          <rect x="178" y="94" width="140" height="38" rx="7" fill="#0d1220" stroke="#0069ff50"/><text x="248" y="116" fill="#e2e8f0" font-size="10" font-weight="700" text-anchor="middle">⚡ AsyncSandbox</text>
+          <rect x="330" y="94" width="170" height="38" rx="7" fill="#0d1220" stroke="#10b98150"/><text x="415" y="116" fill="#e2e8f0" font-size="10" font-weight="700" text-anchor="middle">🏊 SandboxManager</text>
+          <!-- intra-layer arrows -->
+          <line x1="178" y1="113" x2="170" y2="113" stroke="#0069ff60" stroke-width="1" marker-end="url(#ah)"/><text x="175" y="108" fill="#0069ff" font-size="6" text-anchor="middle">wraps</text>
+          <line x1="330" y1="113" x2="322" y2="113" stroke="#10b98160" stroke-width="1" marker-end="url(#ah)"/><text x="327" y="108" fill="#10b981" font-size="6" text-anchor="middle">creates via</text>
+          <rect x="512" y="94" width="155" height="38" rx="7" fill="#0d1220" stroke="#ef444450" stroke-dasharray="4,3"/><text x="589" y="116" fill="#ef4444" font-size="10" font-weight="700" text-anchor="middle">📈 AdaptivePool</text>
+          <text x="680" y="116" fill="#ef4444" font-size="8">✗ unused</text>
+        </g>
+
+        <line x1="350" y1="146" x2="350" y2="162" stroke="#4a6fa5" stroke-width="1.5" marker-end="url(#ah)" stroke-dasharray="5,3" class="flow-dash"/>
+        <text x="420" y="158" fill="#06b6d4" font-size="7" font-style="italic">delegates to engines</text>
+
+        <g class="svg-node" onclick="go('layer','engine')">
+          <rect x="20" y="166" width="820" height="80" rx="12" fill="url(#g2)" stroke="#8b5cf6" stroke-width="1.5"/>
+          <text x="36" y="184" fill="#8b5cf6" font-size="9" font-weight="800" letter-spacing="1.5">EXECUTION ENGINE — click to explore →</text>
+          <rect x="36" y="194" width="95" height="38" rx="7" fill="#0d1220" stroke="#f59e0b50"/><text x="83" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">📋 Deployer</text>
+          <rect x="143" y="194" width="95" height="38" rx="7" fill="#0d1220" stroke="#8b5cf650"/><text x="190" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">📟 Executor</text>
+          <rect x="250" y="194" width="110" height="38" rx="7" fill="#0d1220" stroke="#8b5cf650"/><text x="305" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">🌐 ServiceClient</text>
+          <rect x="372" y="194" width="100" height="38" rx="7" fill="#0d1220" stroke="#06b6d450"/><text x="422" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">📂 FileSystem</text>
+          <rect x="484" y="194" width="85" height="38" rx="7" fill="#0d1220" stroke="#06b6d450"/><text x="526" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">⚙️ Process</text>
+          <rect x="581" y="194" width="95" height="38" rx="7" fill="#0d1220" stroke="#f59e0b50"/><text x="628" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">📸 Snapshot</text>
+          <rect x="688" y="194" width="95" height="38" rx="7" fill="#0d1220" stroke="#8b5cf650"/><text x="735" y="216" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">☁️ Spaces</text>
+          <!-- intra-layer arrows -->
+          <line x1="422" y1="194" x2="210" y2="232" stroke="#06b6d430" stroke-width="1"/><text x="310" y="225" fill="#06b6d4" font-size="6">shell cmds via</text>
+          <line x1="526" y1="194" x2="215" y2="232" stroke="#06b6d430" stroke-width="1"/><text x="375" y="235" fill="#06b6d4" font-size="6">ps/kill via</text>
+          <line x1="472" y1="216" x2="688" y2="216" stroke="#8b5cf630" stroke-width="1" stroke-dasharray="3,2"/><text x="580" y="212" fill="#8b5cf6" font-size="6">large files →</text>
+          <line x1="676" y1="216" x2="688" y2="216" stroke="#f59e0b30" stroke-width="1" stroke-dasharray="3,2"/><text x="678" y="210" fill="#f59e0b" font-size="6">archives →</text>
+        </g>
+
+        <line x1="430" y1="246" x2="430" y2="264" stroke="#4a6fa5" stroke-width="1.5" marker-end="url(#ah)" stroke-dasharray="5,3" class="flow-dash"/>
+        <text x="500" y="260" fill="#06b6d4" font-size="7" font-style="italic">talks to DO services</text>
+
+        <g class="svg-node" onclick="go('layer','infra')">
+          <rect x="20" y="268" width="820" height="80" rx="12" fill="url(#g3)" stroke="#10b981" stroke-width="1.5"/>
+          <text x="36" y="286" fill="#10b981" font-size="9" font-weight="800" letter-spacing="1.5">DIGITALOCEAN INFRASTRUCTURE — click to explore →</text>
+          <rect x="36" y="296" width="120" height="38" rx="7" fill="#0d1220" stroke="#10b98150"/><text x="96" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">🏗️ App Platform</text>
+          <rect x="168" y="296" width="95" height="38" rx="7" fill="#0d1220" stroke="#10b98150"/><text x="215" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">🔧 doctl</text>
+          <rect x="275" y="296" width="95" height="38" rx="7" fill="#0d1220" stroke="#10b98150"/><text x="322" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">💾 Spaces</text>
+          <rect x="382" y="296" width="120" height="38" rx="7" fill="#0d1220" stroke="#10b98150"/><text x="442" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">🐳 Worker Img</text>
+          <rect x="514" y="296" width="120" height="38" rx="7" fill="#0d1220" stroke="#8b5cf650"/><text x="574" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">🖥️ Service Img</text>
+          <rect x="646" y="296" width="180" height="38" rx="7" fill="#0d1220" stroke="#64748b50"/><text x="736" y="318" fill="#e2e8f0" font-size="9" font-weight="600" text-anchor="middle">📐 types 🚨 exceptions 💻 CLI</text>
+          <!-- intra-layer arrows -->
+          <line x1="215" y1="296" x2="140" y2="334" stroke="#10b98130" stroke-width="1"/><text x="172" y="322" fill="#10b981" font-size="6">API calls</text>
+        </g>
+
+        <rect x="20" y="358" width="820" height="26" rx="7" fill="#ffffff03" stroke="#ffffff06"/>
+        <text x="430" y="376" fill="#475569" font-size="8" text-anchor="middle">:8080 your app &nbsp;|&nbsp; :9090 health server &nbsp;|&nbsp; region: atl1 &nbsp;|&nbsp; ~$5/mo per sandbox</text>
+      </svg>
+    </div>
+    <p style="color:var(--cyn);font-size:13px;font-weight:700;margin-top:4px">Or pick a walkthrough journey</p>
+    <div class="jgrid">
+      ${Object.entries(JR).map(([k,j])=>`<div class="jcard" onclick="go('journey','${k}')"><div class="ji">${j.steps[0].ico}</div><div><h3>${j.title.split('(')[0].trim()}</h3><p>${j.sub.substring(0,80)}...</p></div></div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ===== BUILD LAYER =====
+let layerNodes={},layerEdges=[],layerColor='',layerSvg=null,dragInfo=null;
+
+function edgePoint(cx,cy,hw,hh,tx,ty){
+  const dx=tx-cx,dy=ty-cy,adx=Math.abs(dx),ady=Math.abs(dy);
+  if(adx<.01&&ady<.01) return{x:cx,y:cy};
+  if(adx*hh>ady*hw){const s=dx>0?1:-1;return{x:cx+s*hw,y:cy+dy*hw/adx}}
+  else{const s=dy>0?1:-1;return{x:cx+dx*hh/ady,y:cy+s*hh}}
+}
+function calcEdge(e){
+  const f=layerNodes[e.f],t=layerNodes[e.t];if(!f||!t)return null;
+  const fcx=f.x+f.w/2,fcy=f.y+f.h/2,tcx=t.x+t.w/2,tcy=t.y+t.h/2;
+  const p1=edgePoint(fcx,fcy,f.w/2,f.h/2,tcx,tcy);
+  const p2=edgePoint(tcx,tcy,t.w/2,t.h/2,fcx,fcy);
+  const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2;
+  const dx=p2.x-p1.x,dy=p2.y-p1.y,d=Math.hypot(dx,dy);
+  if(d<1) return null;
+  const curve=Math.min(35,d*.2);
+  const nx=-dy/d,ny=dx/d;
+  const cx=mx+nx*curve,cy=my+ny*curve;
+  const lx=mx+nx*(curve*.5),ly=my+ny*(curve*.5)-5;
+  return{path:`M${p1.x.toFixed(1)},${p1.y.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`,lx,ly};
+}
+function renderEdges(){
+  layerEdges.forEach((e,i)=>{
+    const r=calcEdge(e);if(!r)return;
+    const p=layerSvg.querySelector('#ep'+i);
+    const t=layerSvg.querySelector('#et'+i);
+    if(p)p.setAttribute('d',r.path);
+    if(t){t.setAttribute('x',r.lx);t.setAttribute('y',r.ly)}
+  });
+}
+function renderNode(id){
+  const n=layerNodes[id];if(!n)return;
+  const g=layerSvg.querySelector(`[data-id="${id}"]`);if(!g)return;
+  const rect=g.querySelector('rect');
+  const txts=g.querySelectorAll('text');
+  rect.setAttribute('x',n.x);rect.setAttribute('y',n.y);
+  if(txts[0]){txts[0].setAttribute('x',n.x+n.w/2);txts[0].setAttribute('y',n.y+n.h/2-4)}
+  if(txts[1]){txts[1].setAttribute('x',n.x+n.w/2);txts[1].setAttribute('y',n.y+n.h/2+12)}
+}
+
+function buildLayer(id){
+  const L=LG[id];if(!L)return;
+  layerNodes={};layerEdges=L.edges;layerColor=L.color;
+  L.nodes.forEach(n=>{layerNodes[n.id]={...n}});
+  const el=document.getElementById('ly-layer');
+
+  let svg=`<svg id="layersvg" viewBox="0 0 ${L.W} ${L.H}" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="la" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="${L.color}90"/></marker></defs>
+    <g id="edgegroup">`;
+  L.edges.forEach((e,i)=>{
+    const r=calcEdge(e);if(!r)return;
+    svg+=`<path id="ep${i}" d="${r.path}" fill="none" stroke="${L.color}50" stroke-width="2" marker-end="url(#la)" stroke-dasharray="6,4" class="flow-dash"/>`;
+    svg+=`<text id="et${i}" x="${r.lx}" y="${r.ly}" fill="${L.color}" font-size="8.5" font-weight="600" text-anchor="middle">${e.lbl}</text>`;
+  });
+  svg+=`</g>`;
+  L.nodes.forEach(n=>{
+    svg+=`<g class="svg-node" data-id="${n.id}">
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10" fill="#0d1220" stroke="${n.c}" stroke-width="1.5" ${n.dash?'stroke-dasharray="5,3"':''}/>
+      <text x="${n.x+n.w/2}" y="${n.y+n.h/2-4}" fill="#e2e8f0" font-size="11" font-weight="700" text-anchor="middle">${n.lbl}</text>
+      <text x="${n.x+n.w/2}" y="${n.y+n.h/2+12}" fill="#64748b" font-size="9" text-anchor="middle">${n.sub}</text>
+    </g>`;
+  });
+  svg+=`</svg>`;
+
+  el.innerHTML=`<div class="layer-wrap">
+    <div class="back-btn" onclick="go('home',null,'out')"><span>←</span> Back to overview</div>
+    <h2 style="color:${L.color}">${L.title}</h2>
+    <p>${L.desc}</p>
+    <div class="layer-svg">${svg}</div>
+    <div class="drag-hint"><span>✋</span> Drag any box to rearrange &middot; Click a box to zoom in</div>
+  </div>`;
+
+  layerSvg=document.getElementById('layersvg');
+  // Drag handlers
+  layerSvg.addEventListener('mousedown',e=>{
+    const g=e.target.closest('.svg-node');if(!g)return;
+    const nid=g.dataset.id;
+    const pt=layerSvg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    const sp=pt.matrixTransform(layerSvg.getScreenCTM().inverse());
+    const n=layerNodes[nid];
+    dragInfo={id:nid,ox:sp.x-n.x,oy:sp.y-n.y,moved:false};
+    g.classList.add('dragging');
+    e.preventDefault();
+  });
+  layerSvg.addEventListener('mousemove',e=>{
+    if(!dragInfo)return;
+    const pt=layerSvg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    const sp=pt.matrixTransform(layerSvg.getScreenCTM().inverse());
+    const n=layerNodes[dragInfo.id];
+    n.x=sp.x-dragInfo.ox;n.y=sp.y-dragInfo.oy;
+    renderNode(dragInfo.id);renderEdges();
+    dragInfo.moved=true;
+    e.preventDefault();
+  });
+  const endDrag=e=>{
+    if(!dragInfo)return;
+    const g=layerSvg.querySelector(`[data-id="${dragInfo.id}"]`);
+    if(g)g.classList.remove('dragging');
+    if(!dragInfo.moved) go('module',dragInfo.id);
+    dragInfo=null;
+  };
+  layerSvg.addEventListener('mouseup',endDrag);
+  layerSvg.addEventListener('mouseleave',endDrag);
+  // Touch support
+  layerSvg.addEventListener('touchstart',e=>{
+    const g=e.target.closest('.svg-node');if(!g)return;
+    const nid=g.dataset.id;
+    const touch=e.touches[0];
+    const pt=layerSvg.createSVGPoint();pt.x=touch.clientX;pt.y=touch.clientY;
+    const sp=pt.matrixTransform(layerSvg.getScreenCTM().inverse());
+    const n=layerNodes[nid];
+    dragInfo={id:nid,ox:sp.x-n.x,oy:sp.y-n.y,moved:false};
+    g.classList.add('dragging');
+  },{passive:true});
+  layerSvg.addEventListener('touchmove',e=>{
+    if(!dragInfo)return;
+    const touch=e.touches[0];
+    const pt=layerSvg.createSVGPoint();pt.x=touch.clientX;pt.y=touch.clientY;
+    const sp=pt.matrixTransform(layerSvg.getScreenCTM().inverse());
+    const n=layerNodes[dragInfo.id];
+    n.x=sp.x-dragInfo.ox;n.y=sp.y-dragInfo.oy;
+    renderNode(dragInfo.id);renderEdges();
+    dragInfo.moved=true;
+    e.preventDefault();
+  },{passive:false});
+  layerSvg.addEventListener('touchend',e=>{
+    if(!dragInfo)return;
+    const g=layerSvg.querySelector(`[data-id="${dragInfo.id}"]`);
+    if(g)g.classList.remove('dragging');
+    if(!dragInfo.moved) go('module',dragInfo.id);
+    dragInfo=null;
+  });
+}
+
+// ===== BUILD JOURNEY =====
+function buildJourney(id){
+  const J=JR[id];if(!J)return;
+  const el=document.getElementById('ly-journey');
+  let h=`<div class="jv-wrap">
+    <div class="back-btn" onclick="go('home',null,'out')"><span>←</span> Back to overview</div>
+    <h2>${J.title}</h2><p>${J.sub}</p>`;
+  if(J.cmp){
+    h+=`<div class="cmp"><div class="cmp-box" style="border-color:${J.cmp.a.c}30"><h3 style="color:${J.cmp.a.c}">${J.cmp.a.t}</h3><div class="big" style="color:${J.cmp.a.c}">${J.cmp.a.v}</div><p>${J.cmp.a.d}</p></div>
+    <div class="cmp-box" style="border-color:${J.cmp.b.c}30"><h3 style="color:${J.cmp.b.c}">${J.cmp.b.t}</h3><div class="big" style="color:${J.cmp.b.c}">${J.cmp.b.v}</div><p>${J.cmp.b.d}</p></div></div>`;
+  }
+  h+=`<div class="steps">`;
+  J.steps.forEach((s,i)=>{
+    h+=`<div class="step" style="animation-delay:${i*100}ms">
+      <div class="step-ico" style="border-color:${s.w==='loc-container'?'var(--org)':s.w==='loc-do'?'var(--grn)':s.w==='loc-sdk'?'var(--pur)':'var(--acc)'}">${s.ico}</div>
+      <div class="step-bd"><h3>${s.t} <span class="loc ${s.w}">${s.loc}</span></h3><p>${s.d}</p>${s.a?`<div class="albl">↓ ${s.a}</div>`:''}</div>
+    </div>`;
+  });
+  h+=`</div></div>`;el.innerHTML=h;
+}
+
+// ===== BUILD MODULE =====
+function buildModule(id){
+  const m=MOD[id];if(!m)return;
+  const el=document.getElementById('ly-module');
+  const backId=stack.length>=2?stack[stack.length-2]:null;
+  const backLabel=backId?(backId.v==='layer'?LG[backId.id].title:'Back'):'Overview';
+  const backAction=backId?`go('${backId.v}','${backId.id}','out')`:`go('home',null,'out')`;
+  let h=`<div class="mod-wrap">
+    <div class="back-btn" onclick="${backAction}"><span>←</span> ${backLabel}</div>
+    <div class="mod-hero"><div class="bar" style="background:${m.color}"></div>
+      <h2 style="color:${m.color}">${m.ico} ${m.name} <span style="font-size:12px;color:var(--t3);font-weight:400;font-family:monospace">${m.file}</span></h2>
+      <div class="analogy">${m.analogy}</div>
+    </div>
+    <div class="cap-title">What it does — click any box to explore</div>
+    <div class="cap-grid">`;
+  (m.caps||[]).forEach(c=>{
+    const cls=c.bug?'cap cap-bug':c.dead?'cap cap-dead':'cap';
+    const click=c.goto?`onclick="go('module','${c.goto}')"`:c.bug||c.dead?'':'';
+    h+=`<div class="${cls}" ${click}>
+      <div class="cap-ico">${c.ico}</div>
+      <h4>${c.t}</h4>
+      <p>${c.d}</p>
+      ${c.goto?`<div class="cap-link">→ ${MOD[c.goto]?MOD[c.goto].ico+' '+MOD[c.goto].name:c.goto}${c.gl?' — '+c.gl:''}</div>`:''}
+    </div>`;
+  });
+  h+=`</div>`;
+  // Used by
+  if(m.used_by&&m.used_by.length){
+    h+=`<div class="used-by-title">Who uses this module</div><div class="used-grid">`;
+    m.used_by.forEach(u=>{
+      const um=MOD[u.id];
+      h+=`<div class="ub" onclick="go('module','${u.id}')"><span class="ub-arr">←</span><div><h4>${um?um.ico+' '+um.name:u.id}</h4><p>${u.why}</p></div></div>`;
+    });
+    h+=`</div>`;
+  }
+  // Bugs
+  if(m.bugs&&m.bugs.length){
+    h+=`<div class="cap-title" style="color:var(--red);margin-top:6px">Known problems (${m.bugs.length})</div><div class="cap-grid">`;
+    m.bugs.forEach(b=>{h+=`<div class="cap cap-bug" style="cursor:default"><div class="cap-ico">⚠️</div><p>${b}</p></div>`});
+    h+=`</div>`;
+  }
+  h+=`</div>`;el.innerHTML=h;
+}
+
+// ===== KEYBOARD =====
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();goBack()}});
+
+// ===== INIT =====
+buildHome();renderCrumbs();
+</script>
+</body>
+</html>
