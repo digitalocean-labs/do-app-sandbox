@@ -1,8 +1,32 @@
 # Incremental Snapshot Design Document
 
-## Status: Draft
+## Status: Implemented (Phase 1-2)
 ## Author: Design Discussion
 ## Date: 2026-04-14
+
+---
+
+## TL;DR — User-Facing API
+
+```python
+sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+
+# Full base snapshot (same as before)
+base = sandbox.create_snapshot(description="Base")
+
+# Edit files, then take incremental (only changed files, ~95% smaller)
+sandbox.exec("echo 'v2' > /home/sandbox/app/version.txt")
+incr = sandbox.create_incremental_snapshot(parent_snapshot_id=base.snapshot_id)
+
+# Restore full chain to a new sandbox (resolves: base → incr automatically)
+new_sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+new_sandbox.restore_snapshot_chain(incr.snapshot_id)
+```
+
+**Users call snapshot methods explicitly.** The SDK does not automatically trigger snapshots — that's an orchestration concern. The three methods are:
+- `create_snapshot()` — full snapshot (unchanged)
+- `create_incremental_snapshot(parent_snapshot_id)` — delta-only snapshot
+- `restore_snapshot_chain(snapshot_id)` — resolve and apply full chain
 
 ---
 

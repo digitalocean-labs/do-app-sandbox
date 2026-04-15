@@ -129,6 +129,61 @@ sandbox = Sandbox.get_from_id(app_id, component="your-component")
 sandbox = Sandbox.create(image="python", component_type="worker")
 ```
 
+## Snapshots
+
+### Full Snapshots
+```python
+sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+sandbox.exec("pip install flask")
+
+# Create full snapshot (captures entire workspace)
+meta = sandbox.create_snapshot(description="After installing deps")
+
+# Restore to another sandbox
+new_sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+new_sandbox.restore_snapshot(meta.snapshot_id)
+```
+
+### Incremental Snapshots
+Capture only files changed since the last snapshot. Reduces upload size by ~95%.
+```python
+# 1. Full base snapshot
+base = sandbox.create_snapshot(description="Base with deps")
+
+# 2. Edit files, then take incremental (only changed files uploaded)
+sandbox.exec("echo 'v2' > /home/sandbox/app/version.txt")
+incr1 = sandbox.create_incremental_snapshot(
+    parent_snapshot_id=base.snapshot_id,
+    description="Version bump",
+)
+# incr1.size_bytes is ~50 bytes vs base's ~250MB
+
+# 3. More edits + deletions → another incremental
+sandbox.exec("rm /home/sandbox/app/old_file.py")
+sandbox.exec("echo 'new' > /home/sandbox/app/new_file.py")
+incr2 = sandbox.create_incremental_snapshot(
+    parent_snapshot_id=incr1.snapshot_id,
+    description="Cleanup + new file",
+)
+
+# 4. Restore full chain to a new sandbox (base → incr1 → incr2)
+new_sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+new_sandbox.restore_snapshot_chain(incr2.snapshot_id)
+# All edits applied, deletions processed, full state restored
+```
+
+**Key behaviors:**
+- `create_incremental_snapshot()` uses `find -newer` marker files for change detection
+- Manifest comparison tracks file deletions between snapshots
+- Falls back to full snapshot if container was recycled (marker file lost)
+- `restore_snapshot_chain()` resolves the chain automatically and applies layers in order
+
+### Hibernate/Wake
+```python
+hibernated = sandbox.hibernate()  # snapshot + delete (~$0.02/mo storage)
+sandbox = Sandbox.wake(hibernated, spaces_config=spaces_config)  # create + restore
+```
+
 ## Large File Transfers
 Files >= 5MB use DO Spaces as intermediary:
 ```python
@@ -183,6 +238,7 @@ Key types exported from `do_app_sandbox`:
 - `SpacesConfig` - Spaces configuration dict
 - `PoolConfig` - Pool configuration for SandboxManager
 - `PoolMetrics` - Pool metrics (ready, in_use, etc.)
+- `SnapshotMetadata` - Snapshot info (snapshot_id, snapshot_type, chain_depth, parent_snapshot_id, etc.)
 
 ## Exceptions
 ```python
@@ -202,6 +258,7 @@ from do_app_sandbox import (
     PoolExhaustedError,     # No sandboxes available
     PoolShutdownError,      # Pool is shutting down
     WarmUpTimeoutError,     # Warm-up timed out
+    SnapshotChainError,     # Broken/cyclic snapshot chain
 )
 ```
 

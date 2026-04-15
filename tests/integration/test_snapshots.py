@@ -281,3 +281,136 @@ class TestSnapshotErrors:
 
         with pytest.raises(SnapshotNotFoundError):
             manager.get_snapshot_download_url("nonexistent-snapshot-xyz")
+
+
+# ---------------------------------------------------------------------------
+# Incremental Snapshot Chain Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.requires_own_sandbox
+@requires_all_credentials
+class TestIncrementalSnapshotChain:
+    """Tests for incremental snapshot chain: create, resolve, restore.
+
+    These tests create their own sandboxes because they modify filesystem
+    state and restore snapshots (destructive operations).
+
+    Run with: `make test-snapshot` after `make test-setup`
+    """
+
+    @pytest.mark.timeout(300)
+    def test_incremental_chain_full_lifecycle(self, do_token, spaces_config, cleanup_sandboxes, cleanup_snapshots):
+        """Full lifecycle: base → edit → incr1 → delete+edit → incr2 → restore chain (~120s)."""
+        from do_app_sandbox import Sandbox
+        from do_app_sandbox.snapshot import SnapshotManager
+
+        # Create sandbox with content
+        sandbox = Sandbox.create(image="python", api_token=do_token, spaces_config=spaces_config, wait_ready=True)
+        cleanup_sandboxes(sandbox)
+
+        # Write initial files
+        sandbox.exec("mkdir -p /home/sandbox/app/src /home/sandbox/app/data")
+        sandbox.exec("echo 'v1' > /home/sandbox/app/src/main.py")
+        sandbox.exec("echo 'utils' > /home/sandbox/app/src/utils.py")
+        sandbox.exec("echo '{\"v\": 1}' > /home/sandbox/app/data/config.json")
+
+        # Base snapshot (full)
+        base = sandbox.create_snapshot(description="Base with 3 files")
+        cleanup_snapshots(base.snapshot_id)
+
+        assert base.snapshot_type == "full"
+        assert base.chain_depth == 0
+
+        # Edit files → incremental #1
+        sandbox.exec("echo 'v2' > /home/sandbox/app/src/main.py")
+        sandbox.exec("echo 'new' > /home/sandbox/app/src/newfile.py")
+
+        incr1 = sandbox.create_incremental_snapshot(
+            parent_snapshot_id=base.snapshot_id,
+            description="Edited main, added newfile",
+        )
+        cleanup_snapshots(incr1.snapshot_id)
+
+        assert incr1.snapshot_type == "incremental"
+        assert incr1.parent_snapshot_id == base.snapshot_id
+        assert incr1.chain_depth == 1
+        assert incr1.files_changed >= 2
+
+        # Delete + edit → incremental #2
+        sandbox.exec("rm /home/sandbox/app/src/utils.py")
+        sandbox.exec("echo '{\"v\": 2}' > /home/sandbox/app/data/config.json")
+
+        incr2 = sandbox.create_incremental_snapshot(
+            parent_snapshot_id=incr1.snapshot_id,
+            description="Deleted utils, edited config",
+        )
+        cleanup_snapshots(incr2.snapshot_id)
+
+        assert incr2.snapshot_type == "incremental"
+        assert incr2.chain_depth == 2
+        assert incr2.files_deleted >= 1
+
+        # Resolve chain
+        mgr = SnapshotManager(spaces_config=spaces_config)
+        chain = mgr.resolve_chain(incr2.snapshot_id)
+        assert len(chain) == 3
+        assert chain[0].snapshot_type == "full"
+
+        # Restore chain to new sandbox
+        sandbox2 = Sandbox.create(image="python", api_token=do_token, spaces_config=spaces_config, wait_ready=True)
+        cleanup_sandboxes(sandbox2)
+
+        success = sandbox2.restore_snapshot_chain(incr2.snapshot_id)
+        assert success is True
+
+        # Verify state
+        r = sandbox2.exec("cat /home/sandbox/app/src/main.py")
+        assert "v2" in r.stdout
+
+        r = sandbox2.exec("cat /home/sandbox/app/src/newfile.py")
+        assert "new" in r.stdout
+
+        r = sandbox2.exec("cat /home/sandbox/app/data/config.json")
+        assert '"v": 2' in r.stdout
+
+        r = sandbox2.exec("test -f /home/sandbox/app/src/utils.py && echo EXISTS || echo GONE")
+        assert "GONE" in r.stdout
+
+    @pytest.mark.timeout(180)
+    def test_incremental_marker_fallback(self, do_token, spaces_config, cleanup_sandboxes, cleanup_snapshots):
+        """Missing marker falls back to full snapshot (~60s)."""
+        from do_app_sandbox import Sandbox
+
+        sandbox = Sandbox.create(image="python", api_token=do_token, spaces_config=spaces_config, wait_ready=True)
+        cleanup_sandboxes(sandbox)
+
+        sandbox.exec("echo 'content' > /home/sandbox/app/test.txt")
+        base = sandbox.create_snapshot(description="Base")
+        cleanup_snapshots(base.snapshot_id)
+
+        # Remove the marker to simulate container recycle
+        sandbox.exec(f"rm -f /tmp/.snapshot_marker_{base.snapshot_id}")
+
+        sandbox.exec("echo 'updated' > /home/sandbox/app/test.txt")
+        result = sandbox.create_incremental_snapshot(
+            parent_snapshot_id=base.snapshot_id,
+            description="Should fall back to full",
+        )
+        cleanup_snapshots(result.snapshot_id)
+
+        # Should have fallen back to full
+        assert result.snapshot_type == "full"
+        assert result.chain_depth == 0
+
+    @pytest.mark.timeout(10)
+    def test_chain_error_on_broken_chain(self, spaces_config):
+        """Resolve chain raises SnapshotChainError for missing snapshot (~2s)."""
+        from do_app_sandbox.exceptions import SnapshotChainError
+        from do_app_sandbox.snapshot import SnapshotManager
+
+        mgr = SnapshotManager(spaces_config=spaces_config)
+
+        with pytest.raises(SnapshotChainError):
+            mgr.resolve_chain("nonexistent-chain-tip")

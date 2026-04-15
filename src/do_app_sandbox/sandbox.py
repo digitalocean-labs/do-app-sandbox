@@ -964,6 +964,93 @@ class Sandbox:
             sandbox=self, snapshot_id=snapshot_id, target_path=target_path, timeout=timeout
         )
 
+    def create_incremental_snapshot(
+        self,
+        parent_snapshot_id: str,
+        snapshot_id: str | None = None,
+        paths: list[str] | None = None,
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+        timeout: int = 600,
+    ) -> SnapshotMetadata:
+        """Create an incremental snapshot relative to a parent.
+
+        Only captures files changed since the parent snapshot.
+        Falls back to full snapshot if the container was recycled.
+
+        Args:
+            parent_snapshot_id: ID of the parent snapshot
+            snapshot_id: Optional unique ID (auto-generated if not provided)
+            paths: Paths to include (defaults to mode-appropriate directory)
+            description: Optional human-readable description
+            tags: Optional key-value tags
+            timeout: Timeout in seconds
+
+        Returns:
+            SnapshotMetadata with snapshot_type="incremental"
+
+        Example:
+            >>> base = sandbox.create_snapshot(description="Base")
+            >>> sandbox.exec("echo 'v2' > /home/sandbox/app/version.txt")
+            >>> incr = sandbox.create_incremental_snapshot(
+            ...     parent_snapshot_id=base.snapshot_id,
+            ...     description="Version bump",
+            ... )
+            >>> print(f"Incremental: {incr.size_bytes} bytes")  # ~50 bytes vs ~250MB
+        """
+        self._ensure_awake()
+
+        if paths is None:
+            if self._mode == SandboxMode.SERVICE:
+                paths = ["/workspace"]
+            else:
+                paths = ["/home/sandbox/app"]
+
+        from .snapshot import SnapshotManager
+
+        snapshot_mgr = SnapshotManager(self._spaces_config)
+        return snapshot_mgr.create_incremental_snapshot(
+            sandbox=self,
+            parent_snapshot_id=parent_snapshot_id,
+            snapshot_id=snapshot_id,
+            paths=paths,
+            description=description,
+            tags=tags,
+            timeout=timeout,
+        )
+
+    def restore_snapshot_chain(
+        self,
+        snapshot_id: str,
+        target_path: str = "/",
+        timeout: int = 600,
+    ) -> bool:
+        """Restore a snapshot by applying its full chain.
+
+        Resolves the chain from root full snapshot through all incremental
+        layers, applying them in order. Handles file deletions at each step.
+
+        Args:
+            snapshot_id: ID of snapshot to restore (can be any in chain)
+            target_path: Base path for extraction
+            timeout: Timeout in seconds
+
+        Returns:
+            True if restoration succeeded
+
+        Example:
+            >>> new_sandbox.restore_snapshot_chain(incr2.snapshot_id)
+            # Applies: base (full) → incr1 → incr2
+        """
+        self._ensure_awake()
+
+        from .snapshot import SnapshotManager
+
+        snapshot_mgr = SnapshotManager(self._spaces_config)
+        return snapshot_mgr.restore_snapshot_chain(
+            sandbox=self, snapshot_id=snapshot_id, target_path=target_path, timeout=timeout
+        )
+
     # =========================================================================
     # Hibernation
     # =========================================================================

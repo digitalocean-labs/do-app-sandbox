@@ -89,9 +89,21 @@ class SnapshotMetadata:
     description: str | None = None
     tags: dict[str, str] = field(default_factory=dict)
 
+    # Incremental snapshot fields (all have defaults for backward compatibility)
+    snapshot_type: str = "full"  # "full" | "incremental"
+    parent_snapshot_id: str | None = None
+    chain_depth: int = 0  # 0 for full, N for Nth incremental in chain
+    chain_root_id: str | None = None
+    files_changed: int = 0
+    files_deleted: int = 0
+    dep_layer_id: str | None = None
+    lockfile_hash: str | None = None
+
     def __repr__(self) -> str:
         size_mb = self.size_bytes / (1024 * 1024)
-        return f"SnapshotMetadata(id={self.snapshot_id!r}, size={size_mb:.1f}MB)"
+        type_str = f", type={self.snapshot_type}" if self.snapshot_type != "full" else ""
+        chain_str = f", chain_depth={self.chain_depth}" if self.chain_depth > 0 else ""
+        return f"SnapshotMetadata(id={self.snapshot_id!r}, size={size_mb:.1f}MB{type_str}{chain_str})"
 
 
 @dataclass

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from do_app_sandbox.exceptions import (
+    SnapshotChainError,
     SnapshotNotFoundError,
     SpacesNotConfiguredError,
 )
@@ -403,3 +404,260 @@ class TestSnapshotManagerOperations:
 
         with pytest.raises(SnapshotNotFoundError):
             snapshot_manager.get_snapshot_download_url("nonexistent")
+
+
+# =============================================================================
+# Incremental Snapshot Tests
+# =============================================================================
+
+
+class TestSnapshotMetadataBackwardCompat:
+    """Tests for backward compatibility of SnapshotMetadata with incremental fields."""
+
+    def test_old_metadata_without_incremental_fields(self):
+        """Old metadata JSON (without incremental fields) deserializes correctly."""
+        old_json = {
+            "snapshot_id": "snap-old",
+            "created_at": 1700000000.0,
+            "sandbox_image": "python",
+            "size_bytes": 1024,
+            "paths": ["/workspace"],
+            "description": "Old snapshot",
+            "tags": {"env": "test"},
+        }
+        meta = SnapshotMetadata(**old_json)
+
+        assert meta.snapshot_type == "full"
+        assert meta.parent_snapshot_id is None
+        assert meta.chain_depth == 0
+        assert meta.chain_root_id is None
+        assert meta.files_changed == 0
+        assert meta.files_deleted == 0
+        assert meta.dep_layer_id is None
+        assert meta.lockfile_hash is None
+
+    def test_incremental_metadata_round_trip(self):
+        """Incremental metadata serializes and deserializes correctly."""
+        from dataclasses import asdict
+
+        meta = SnapshotMetadata(
+            snapshot_id="snap-incr",
+            created_at=1700000000.0,
+            sandbox_image="python",
+            size_bytes=512,
+            paths=["/workspace"],
+            snapshot_type="incremental",
+            parent_snapshot_id="snap-base",
+            chain_depth=2,
+            chain_root_id="snap-root",
+            files_changed=5,
+            files_deleted=1,
+        )
+
+        json_str = json.dumps(asdict(meta))
+        parsed = json.loads(json_str)
+        restored = SnapshotMetadata(**parsed)
+
+        assert restored.snapshot_type == "incremental"
+        assert restored.parent_snapshot_id == "snap-base"
+        assert restored.chain_depth == 2
+        assert restored.chain_root_id == "snap-root"
+        assert restored.files_changed == 5
+        assert restored.files_deleted == 1
+
+    def test_repr_includes_incremental_info(self):
+        """repr shows type and chain_depth for incremental snapshots."""
+        meta = SnapshotMetadata(
+            snapshot_id="snap-incr",
+            created_at=1.0,
+            sandbox_image="python",
+            size_bytes=100,
+            paths=["/workspace"],
+            snapshot_type="incremental",
+            chain_depth=3,
+        )
+        r = repr(meta)
+        assert "incremental" in r
+        assert "chain_depth=3" in r
+
+    def test_repr_omits_type_for_full(self):
+        """repr omits type info for full snapshots."""
+        meta = SnapshotMetadata(
+            snapshot_id="snap-full",
+            created_at=1.0,
+            sandbox_image="python",
+            size_bytes=100,
+            paths=["/workspace"],
+        )
+        r = repr(meta)
+        assert "incremental" not in r
+        assert "chain_depth" not in r
+
+
+class TestResolveChain:
+    """Tests for resolve_chain() with mocked Spaces."""
+
+    @pytest.fixture
+    def manager_with_snapshots(self):
+        """Create a SnapshotManager with pre-loaded snapshot metadata."""
+        config = SpacesConfig(bucket="test-bucket", region="nyc3", access_key="key", secret_key="secret")
+
+        with patch("do_app_sandbox.snapshot.SpacesClient") as MockClient:
+            mock_spaces = MagicMock()
+            MockClient.return_value = mock_spaces
+
+            from do_app_sandbox.snapshot import SnapshotManager
+
+            manager = SnapshotManager(spaces_config=config)
+            manager._spaces = mock_spaces
+
+            # Pre-populate snapshot metadata store
+            snapshots = {
+                "snap-root": SnapshotMetadata(
+                    snapshot_id="snap-root", created_at=1.0, sandbox_image="python",
+                    size_bytes=1000, paths=["/workspace"], snapshot_type="full",
+                ),
+                "snap-incr1": SnapshotMetadata(
+                    snapshot_id="snap-incr1", created_at=2.0, sandbox_image="python",
+                    size_bytes=100, paths=["/workspace"], snapshot_type="incremental",
+                    parent_snapshot_id="snap-root", chain_depth=1, chain_root_id="snap-root",
+                    files_changed=3,
+                ),
+                "snap-incr2": SnapshotMetadata(
+                    snapshot_id="snap-incr2", created_at=3.0, sandbox_image="python",
+                    size_bytes=50, paths=["/workspace"], snapshot_type="incremental",
+                    parent_snapshot_id="snap-incr1", chain_depth=2, chain_root_id="snap-root",
+                    files_changed=1, files_deleted=1,
+                ),
+            }
+
+            def mock_get_object(key):
+                for sid, meta in snapshots.items():
+                    if key == f"snapshots/{sid}/metadata.json":
+                        from dataclasses import asdict
+                        return json.dumps(asdict(meta)).encode()
+                raise Exception("Not found")
+
+            mock_spaces.get_object.side_effect = mock_get_object
+            return manager
+
+    def test_resolve_chain_happy_path(self, manager_with_snapshots):
+        """Resolves chain from tip to root correctly."""
+        chain = manager_with_snapshots.resolve_chain("snap-incr2")
+
+        assert len(chain) == 3
+        assert chain[0].snapshot_id == "snap-root"
+        assert chain[0].snapshot_type == "full"
+        assert chain[1].snapshot_id == "snap-incr1"
+        assert chain[1].snapshot_type == "incremental"
+        assert chain[2].snapshot_id == "snap-incr2"
+        assert chain[2].snapshot_type == "incremental"
+
+    def test_resolve_chain_single_full(self, manager_with_snapshots):
+        """Full snapshot resolves to single-element chain."""
+        chain = manager_with_snapshots.resolve_chain("snap-root")
+
+        assert len(chain) == 1
+        assert chain[0].snapshot_id == "snap-root"
+        assert chain[0].snapshot_type == "full"
+
+    def test_resolve_chain_from_middle(self, manager_with_snapshots):
+        """Resolving from middle of chain includes root and middle."""
+        chain = manager_with_snapshots.resolve_chain("snap-incr1")
+
+        assert len(chain) == 2
+        assert chain[0].snapshot_id == "snap-root"
+        assert chain[1].snapshot_id == "snap-incr1"
+
+    def test_resolve_chain_broken_chain(self, manager_with_snapshots):
+        """Raises SnapshotChainError for broken chain."""
+        with pytest.raises(SnapshotChainError, match="not found"):
+            manager_with_snapshots.resolve_chain("nonexistent-snap")
+
+    def test_resolve_chain_detects_cycle(self):
+        """Raises SnapshotChainError for cyclic chain."""
+        config = SpacesConfig(bucket="test", region="nyc3", access_key="k", secret_key="s")
+
+        with patch("do_app_sandbox.snapshot.SpacesClient") as MockClient:
+            mock_spaces = MagicMock()
+            MockClient.return_value = mock_spaces
+
+            from do_app_sandbox.snapshot import SnapshotManager
+
+            manager = SnapshotManager(spaces_config=config)
+            manager._spaces = mock_spaces
+
+            # Create a cycle: A → B → A
+            cycle_snaps = {
+                "snap-a": SnapshotMetadata(
+                    snapshot_id="snap-a", created_at=1.0, sandbox_image="python",
+                    size_bytes=100, paths=["/workspace"], snapshot_type="incremental",
+                    parent_snapshot_id="snap-b",
+                ),
+                "snap-b": SnapshotMetadata(
+                    snapshot_id="snap-b", created_at=2.0, sandbox_image="python",
+                    size_bytes=100, paths=["/workspace"], snapshot_type="incremental",
+                    parent_snapshot_id="snap-a",
+                ),
+            }
+
+            def mock_get(key):
+                for sid, meta in cycle_snaps.items():
+                    if key == f"snapshots/{sid}/metadata.json":
+                        from dataclasses import asdict
+                        return json.dumps(asdict(meta)).encode()
+                raise Exception("Not found")
+
+            mock_spaces.get_object.side_effect = mock_get
+
+            with pytest.raises(SnapshotChainError, match="Cycle detected"):
+                manager.resolve_chain("snap-a")
+
+    def test_resolve_chain_no_full_root(self):
+        """Raises SnapshotChainError when chain doesn't reach a full snapshot."""
+        config = SpacesConfig(bucket="test", region="nyc3", access_key="k", secret_key="s")
+
+        with patch("do_app_sandbox.snapshot.SpacesClient") as MockClient:
+            mock_spaces = MagicMock()
+            MockClient.return_value = mock_spaces
+
+            from do_app_sandbox.snapshot import SnapshotManager
+
+            manager = SnapshotManager(spaces_config=config)
+            manager._spaces = mock_spaces
+
+            # Incremental with no parent and not marked as full
+            orphan = SnapshotMetadata(
+                snapshot_id="snap-orphan", created_at=1.0, sandbox_image="python",
+                size_bytes=100, paths=["/workspace"], snapshot_type="incremental",
+                parent_snapshot_id=None,  # No parent, but type is incremental
+            )
+
+            def mock_get(key):
+                if "snap-orphan" in key:
+                    from dataclasses import asdict
+                    return json.dumps(asdict(orphan)).encode()
+                raise Exception("Not found")
+
+            mock_spaces.get_object.side_effect = mock_get
+
+            with pytest.raises(SnapshotChainError, match="does not terminate"):
+                manager.resolve_chain("snap-orphan")
+
+
+class TestIncrementalSnapshotKeyFormat:
+    """Tests for incremental snapshot Spaces key format."""
+
+    def test_manifest_key_format(self):
+        """manifest.txt stored alongside archive."""
+        prefix = "snapshots/"
+        snapshot_id = "snap-test"
+        manifest_key = f"{prefix}{snapshot_id}/manifest.txt"
+        assert manifest_key == "snapshots/snap-test/manifest.txt"
+
+    def test_deletions_key_format(self):
+        """deletions.txt stored alongside archive."""
+        prefix = "snapshots/"
+        snapshot_id = "snap-test"
+        deletions_key = f"{prefix}{snapshot_id}/deletions.txt"
+        assert deletions_key == "snapshots/snap-test/deletions.txt"

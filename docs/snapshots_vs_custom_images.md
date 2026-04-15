@@ -132,6 +132,57 @@ Do you know your environment ahead of time?
     └── Need to hibernate for cost savings? → Snapshots
 ```
 
+## Incremental Snapshots
+
+For workloads that take frequent checkpoints, incremental snapshots capture only the files changed since the last snapshot — reducing upload size by ~95% and storage by ~90%.
+
+### When to Use
+
+- Agent tasks that checkpoint frequently (every few edits)
+- Iterative development with small changes between snapshots
+- Projects with large dependencies (node_modules, .venv) that don't change often
+
+### How It Works
+
+```python
+sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+sandbox.exec("cd /home/sandbox/app && uv venv .venv && uv pip install flask")
+sandbox.filesystem.upload_file("app.py", "/home/sandbox/app/app.py")
+
+# First snapshot is always full (~250MB with .venv)
+base = sandbox.create_snapshot(description="Base with deps")
+
+# Edit 2 files → incremental captures only those 2 files (~50 bytes)
+sandbox.exec("echo 'v2' > /home/sandbox/app/app.py")
+sandbox.exec("echo 'helpers' > /home/sandbox/app/utils.py")
+incr = sandbox.create_incremental_snapshot(
+    parent_snapshot_id=base.snapshot_id,
+    description="Updated app, added utils",
+)
+
+# Restore full chain to a new sandbox
+new_sandbox = Sandbox.create(image="python", spaces_config=spaces_config)
+new_sandbox.restore_snapshot_chain(incr.snapshot_id)
+# Applies: base (full) → incr (changed files only)
+# Result: complete workspace with all deps + updated files
+```
+
+### Key Details
+
+- **Change detection**: Uses `find -newer` with marker files — no rsync or overlayfs needed
+- **Deletion tracking**: Manifest comparison detects files removed between snapshots
+- **Fallback**: If the container is recycled (marker lost), automatically falls back to full snapshot
+- **Chain resolution**: `restore_snapshot_chain()` walks parent links and applies layers in order
+- **Metadata**: `SnapshotMetadata.snapshot_type` is `"full"` or `"incremental"`, `chain_depth` tracks position
+
+### Size Impact
+
+| Operation | Full Snapshot | Incremental |
+|-----------|--------------|-------------|
+| First snapshot (Python + .venv) | ~250 MB | ~250 MB (always full) |
+| Edit 3 files, snapshot | ~250 MB | ~50 KB |
+| 10 snapshots, same deps | ~2,500 MB | ~250 MB + 9 × ~75 KB |
+
 ## Combining Both
 
 Custom images and snapshots are not mutually exclusive:

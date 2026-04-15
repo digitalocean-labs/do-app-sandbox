@@ -121,6 +121,12 @@ class SnapshotRestoreError(SnapshotError):
     pass
 
 
+class SnapshotChainError(SnapshotError):
+    """Raised when snapshot chain is broken, cyclic, or invalid."""
+
+    pass
+
+
 # Service mode exceptions
 
 
