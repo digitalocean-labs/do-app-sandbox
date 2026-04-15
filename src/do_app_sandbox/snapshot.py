@@ -16,13 +16,18 @@ import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
+import logging
+
 from .exceptions import (
+    SnapshotChainError,
     SnapshotError,
     SnapshotNotFoundError,
     SnapshotRestoreError,
     SnapshotUploadError,
     SpacesNotConfiguredError,
 )
+
+logger = logging.getLogger(__name__)
 from .spaces import SpacesClient
 from .types import SnapshotMetadata, SpacesConfig
 
@@ -174,6 +179,20 @@ class SnapshotManager:
         if not upload_result.success:
             raise SnapshotUploadError(f"Failed to upload snapshot: {upload_result.stderr}")
 
+        # Generate and store manifest (sorted file list for incremental diffing)
+        paths_str_abs = " ".join(paths)
+        find_excludes = " ".join(
+            f"-not -path '*/{p}/*'" if p.endswith("/") else f"-not -path '*/{p}'" if "/" not in p else f"-not -path '*/{p}'"
+            for p in exclude_patterns
+            if not p.startswith("*")
+        )
+        manifest_cmd = f"find {paths_str_abs} -type f {find_excludes} -printf '%P\\n' 2>/dev/null | sort"
+        manifest_result = sandbox.exec(manifest_cmd, timeout=timeout)
+        manifest_content = manifest_result.stdout if manifest_result.success else ""
+
+        manifest_key = f"{self._prefix}{snapshot_id}/manifest.txt"
+        self._spaces.put_object(manifest_key, manifest_content.encode(), content_type="text/plain")
+
         # Create and save metadata
         metadata = SnapshotMetadata(
             snapshot_id=snapshot_id,
@@ -183,8 +202,12 @@ class SnapshotManager:
             paths=paths,
             description=description,
             tags=tags or {},
+            snapshot_type="full",
         )
         self._save_metadata(metadata)
+
+        # Touch marker file for incremental snapshot support
+        sandbox.exec(f"touch /tmp/.snapshot_marker_{snapshot_id}")
 
         # Cleanup archive in sandbox
         sandbox.exec(f"rm -f {archive}")
@@ -398,3 +421,277 @@ class SnapshotManager:
         self._save_metadata(metadata)
 
         return metadata
+
+    # =========================================================================
+    # Incremental Snapshots
+    # =========================================================================
+
+    def resolve_chain(self, snapshot_id: str) -> list[SnapshotMetadata]:
+        """Walk parent links to build the ordered snapshot chain.
+
+        Returns a list ordered [root_full, incr_1, ..., target].
+
+        Raises:
+            SnapshotChainError: If chain is broken, cyclic, or doesn't
+                terminate at a full snapshot
+        """
+        chain: list[SnapshotMetadata] = []
+        visited: set[str] = set()
+        current_id: str | None = snapshot_id
+
+        while current_id is not None:
+            if current_id in visited:
+                raise SnapshotChainError(f"Cycle detected at {current_id}")
+
+            meta = self.get_snapshot(current_id)
+            if meta is None:
+                raise SnapshotChainError(f"Broken chain: {current_id} not found")
+
+            visited.add(current_id)
+            chain.append(meta)
+
+            if meta.snapshot_type == "full" or meta.parent_snapshot_id is None:
+                break
+
+            current_id = meta.parent_snapshot_id
+
+        # Verify chain terminates at a full snapshot
+        if chain and chain[-1].snapshot_type != "full":
+            raise SnapshotChainError(
+                f"Chain does not terminate at a full snapshot "
+                f"(tip: {chain[-1].snapshot_id}, type: {chain[-1].snapshot_type})"
+            )
+
+        # Reverse so root is first: [root_full, incr_1, ..., target]
+        chain.reverse()
+        return chain
+
+    def create_incremental_snapshot(
+        self,
+        sandbox: "Sandbox",
+        parent_snapshot_id: str,
+        snapshot_id: str | None = None,
+        paths: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        description: str | None = None,
+        tags: dict[str, str] | None = None,
+        timeout: int = 600,
+    ) -> SnapshotMetadata:
+        """Create a snapshot containing only files changed since the parent.
+
+        Uses `find -newer` with a marker file for change detection and
+        manifest comparison for deletion tracking.
+
+        Falls back to a full snapshot if the marker file is missing
+        (e.g., container was recycled).
+
+        Args:
+            sandbox: Sandbox to snapshot
+            parent_snapshot_id: ID of the parent snapshot
+            snapshot_id: Optional unique ID (auto-generated if not provided)
+            paths: Paths to include (default: mode-appropriate working directory)
+            exclude_patterns: Patterns to exclude (default: caches only)
+            description: Optional human-readable description
+            tags: Optional key-value tags
+            timeout: Timeout for operations in seconds
+
+        Returns:
+            SnapshotMetadata with snapshot_type="incremental"
+
+        Raises:
+            SnapshotError: If snapshot creation fails
+            SnapshotNotFoundError: If parent snapshot doesn't exist
+        """
+        # Validate parent exists
+        parent = self.get_snapshot(parent_snapshot_id)
+        if parent is None:
+            raise SnapshotNotFoundError(f"Parent snapshot not found: {parent_snapshot_id}")
+
+        # Check marker file
+        marker_path = f"/tmp/.snapshot_marker_{parent_snapshot_id}"
+        marker_check = sandbox.exec(f"test -f {marker_path} && echo EXISTS || echo MISSING")
+
+        if "MISSING" in marker_check.stdout:
+            logger.warning(
+                "Marker file missing for %s — falling back to full snapshot "
+                "(container may have been recycled)",
+                parent_snapshot_id,
+            )
+            return self.create_snapshot(
+                sandbox=sandbox,
+                snapshot_id=snapshot_id,
+                paths=paths,
+                exclude_patterns=exclude_patterns,
+                description=description,
+                tags=tags,
+                timeout=timeout,
+            )
+
+        snapshot_id = snapshot_id or f"snap-{uuid.uuid4().hex[:12]}"
+        paths = paths or DEFAULT_SNAPSHOT_PATHS
+        exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS
+
+        paths_str_abs = " ".join(paths)
+
+        # Build find exclusions for -newer search
+        find_excludes = []
+        for p in exclude_patterns:
+            if p.endswith("/"):
+                find_excludes.append(f"-not -path '*/{p}*'")
+            elif "*" in p:
+                find_excludes.append(f"-not -name '{p}'")
+            else:
+                find_excludes.append(f"-not -path '*/{p}/*' -not -name '{p}'")
+        find_exclude_str = " ".join(find_excludes)
+
+        # Find changed files since marker
+        find_cmd = (
+            f"find {paths_str_abs} -newer {marker_path} "
+            f"{find_exclude_str} "
+            f"-type f > /tmp/changed_files_{snapshot_id}.txt 2>/dev/null; "
+            f"wc -l < /tmp/changed_files_{snapshot_id}.txt"
+        )
+        find_result = sandbox.exec(find_cmd, timeout=timeout)
+        files_changed = int(find_result.stdout.strip()) if find_result.success else 0
+
+        # Generate current manifest
+        manifest_cmd = f"find {paths_str_abs} {find_exclude_str} -type f -printf '%P\\n' 2>/dev/null | sort"
+        manifest_result = sandbox.exec(manifest_cmd, timeout=timeout)
+        current_manifest = manifest_result.stdout if manifest_result.success else ""
+
+        # Download parent manifest and compute deletions
+        parent_manifest_key = f"{self._prefix}{parent_snapshot_id}/manifest.txt"
+        files_deleted = 0
+        try:
+            parent_manifest_bytes = self._spaces.get_object(parent_manifest_key)
+            parent_manifest = parent_manifest_bytes.decode()
+
+            # Compute deletions: files in parent but not in current
+            parent_set = set(parent_manifest.strip().splitlines())
+            current_set = set(current_manifest.strip().splitlines())
+            deleted_files = sorted(parent_set - current_set)
+            files_deleted = len(deleted_files)
+            deletions_content = "\n".join(deleted_files) + "\n" if deleted_files else ""
+        except Exception:
+            # No parent manifest available — skip deletion tracking
+            deletions_content = ""
+            logger.warning("Could not retrieve parent manifest for %s", parent_snapshot_id)
+
+        # Create incremental archive from changed files only
+        archive = f"/tmp/snapshot_{snapshot_id}.tar.gz"
+        size_bytes = 0
+
+        if files_changed > 0:
+            tar_cmd = f"tar -czf {archive} -C / -T /tmp/changed_files_{snapshot_id}.txt"
+            tar_result = sandbox.exec(tar_cmd, timeout=timeout)
+            if not tar_result.success:
+                raise SnapshotError(f"Failed to create incremental archive: {tar_result.stderr}")
+
+            size_result = sandbox.exec(f"stat -c %s {archive}")
+            if size_result.success:
+                size_bytes = int(size_result.stdout.strip())
+
+            # Upload archive
+            archive_key = f"{self._prefix}{snapshot_id}/archive.tar.gz"
+            upload_url = self._spaces.generate_presigned_upload_url(archive_key, expires_in=3600)
+            upload_result = sandbox.exec(f"curl -sSf -X PUT -T {archive} '{upload_url}'", timeout=timeout)
+            if not upload_result.success:
+                raise SnapshotUploadError(f"Failed to upload incremental snapshot: {upload_result.stderr}")
+
+        # Store manifest
+        manifest_key = f"{self._prefix}{snapshot_id}/manifest.txt"
+        self._spaces.put_object(manifest_key, current_manifest.encode(), content_type="text/plain")
+
+        # Store deletions.txt if any
+        if files_deleted > 0:
+            deletions_key = f"{self._prefix}{snapshot_id}/deletions.txt"
+            self._spaces.put_object(deletions_key, deletions_content.encode(), content_type="text/plain")
+
+        # Save metadata
+        metadata = SnapshotMetadata(
+            snapshot_id=snapshot_id,
+            created_at=time.time(),
+            sandbox_image=sandbox._image,
+            size_bytes=size_bytes,
+            paths=paths,
+            description=description,
+            tags=tags or {},
+            snapshot_type="incremental",
+            parent_snapshot_id=parent_snapshot_id,
+            chain_depth=parent.chain_depth + 1,
+            chain_root_id=parent.chain_root_id or parent.snapshot_id,
+            files_changed=files_changed,
+            files_deleted=files_deleted,
+        )
+        self._save_metadata(metadata)
+
+        # Touch new marker
+        sandbox.exec(f"touch /tmp/.snapshot_marker_{snapshot_id}")
+
+        # Cleanup temp files
+        sandbox.exec(f"rm -f {archive} /tmp/changed_files_{snapshot_id}.txt")
+
+        return metadata
+
+    def restore_snapshot_chain(
+        self,
+        sandbox: "Sandbox",
+        snapshot_id: str,
+        target_path: str = "/",
+        timeout: int = 600,
+    ) -> bool:
+        """Restore a snapshot by applying its entire chain.
+
+        Resolves the chain from root full snapshot through all incremental
+        layers, applying them in order. Handles file deletions at each layer.
+
+        Args:
+            sandbox: Sandbox to restore to
+            snapshot_id: ID of the snapshot to restore (can be any in chain)
+            target_path: Base path for extraction (default: /)
+            timeout: Timeout for operations in seconds
+
+        Returns:
+            True if restoration succeeded
+
+        Raises:
+            SnapshotChainError: If chain resolution fails
+            SnapshotRestoreError: If restoration fails
+        """
+        chain = self.resolve_chain(snapshot_id)
+
+        for meta in chain:
+            # Skip layers with no archive (empty incrementals)
+            if meta.size_bytes == 0 and meta.snapshot_type == "incremental":
+                logger.info("Skipping empty incremental layer: %s", meta.snapshot_id)
+            else:
+                # Extract archive
+                archive_key = f"{self._prefix}{meta.snapshot_id}/archive.tar.gz"
+                download_url = self._spaces.generate_presigned_download_url(archive_key, expires_in=3600)
+                restore_cmd = f"curl -sSfL '{download_url}' | tar -xzf - -C {target_path}"
+                result = sandbox.exec(restore_cmd, timeout=timeout)
+                if not result.success:
+                    raise SnapshotRestoreError(
+                        f"Failed to restore layer {meta.snapshot_id}: {result.stderr}"
+                    )
+
+            # Process deletions for incremental layers
+            if meta.snapshot_type == "incremental" and meta.files_deleted > 0:
+                deletions_key = f"{self._prefix}{meta.snapshot_id}/deletions.txt"
+                try:
+                    deletions_bytes = self._spaces.get_object(deletions_key)
+                    deletions = deletions_bytes.decode().strip()
+                    if deletions:
+                        # Determine the base path for deletions from snapshot paths
+                        base_path = meta.paths[0] if meta.paths else "/workspace"
+                        # Batch-delete using xargs
+                        delete_cmd = f"echo '{deletions}' | xargs -d '\\n' -I{{}} rm -f '{base_path}/{{}}'"
+                        sandbox.exec(delete_cmd, timeout=timeout)
+                except Exception as e:
+                    logger.warning("Could not process deletions for %s: %s", meta.snapshot_id, e)
+
+        # Touch marker for the most recent snapshot in chain
+        tip = chain[-1]
+        sandbox.exec(f"touch /tmp/.snapshot_marker_{tip.snapshot_id}")
+
+        return True

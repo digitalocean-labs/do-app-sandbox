@@ -66,6 +66,7 @@ from .exceptions import (
     ServiceModeError,
     ServiceNotAvailableError,
     # Snapshot exceptions
+    SnapshotChainError,
     SnapshotError,
     SnapshotNotFoundError,
     SnapshotRestoreError,
@@ -176,6 +177,7 @@ __all__ = [
     "SnapshotNotFoundError",
     "SnapshotUploadError",
     "SnapshotRestoreError",
+    "SnapshotChainError",
     # Service mode exceptions
     "ServiceModeError",
     "ServiceNotAvailableError",
